@@ -165,7 +165,7 @@ table.cmp{border-collapse:collapse;width:100%;font-size:13px;font-variant-numeri
 <div class="sheetbg" id="sheetbg"><div class="sheet" id="sheet"></div></div>
 <div class="toast" id="toast"></div>
 <input type="file" id="fileStmt" accept=".xls,.xlsx,.csv,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv" multiple hidden>
-<input type="file" id="fileSync" accept=".json,application/json" hidden>
+<input type="file" id="fileSync" hidden>
 
 <script>/* Kharcha Pani - offline spreadsheet reader (.xls BIFF8, .xlsx, .csv). No libraries. */
 (function (G) {
@@ -476,7 +476,7 @@ function load(){
 }
 function fresh(){
   var st={v:1,hv:HEADS_VERSION,heads:JSON.parse(JSON.stringify(DEFAULT_HEADS)),budgets:SEED.budgets||{},defBudget:DEFAULT_BUDGET,
-    settings:{inr:26,warn:20,salary:14000},entries:[],deleted:[],cfgUp:now(),lastBackup:0,sources:{}};
+    settings:{inr:26,warn:20,salary:14000},entries:[],deleted:[],cfgUp:0,lastBackup:0,sources:{}};
   var occ={};
   (SEED.hist||[]).forEach(function(h){
     var base=dkey(h.s,h.sd||h.d,h.a,h.c,h.t); occ[base]=(occ[base]||0)+1;
@@ -821,6 +821,7 @@ function renderHome(){
     h+='<button class="head" data-head="'+x.id+'" style="border-left-color:'+x.c+'"><div class="t"><span class="n">'+esc(x.n)+'</span><b>'+right+'</b></div>'+
       '<div class="bar"><i style="width:'+w+'%;background:'+col+'"></i></div>'+
       '<div class="s"><span>Spent '+fmt(p.spent)+(p.budget>0?' of '+fmt(p.budget):'')+'</span><span>Last month '+fmt(pp?pp.spent:0)+'</span></div>';
+    if(p.spent>0) h+='<div class="subs" style="margin-top:6px"><span data-shops="'+x.id+'" style="background:#e1eeee;color:var(--brand);font-weight:700">🏪 By shop ›</span></div>';
     if(x.subs&&p.spent>0){h+='<div class="subs">'+x.subs.filter(function(sb){return p.subs[sb[0]]}).map(function(sb){return '<span data-head="'+x.id+'" data-sub="'+sb[0]+'">'+esc(sb[1])+' '+fmt(p.subs[sb[0]])+'</span>'}).join('')+'</div>'}
     h+='</button>';
   });
@@ -1099,27 +1100,37 @@ function openSplit(e){
 }
 
 /* ---------- ENTRIES ---------- */
+function shopKey(e){return mkey(e.t)||String(e.t||'').toLowerCase()}
+function entMatch(e){
+  if(entFilter.h==='_in'){ if(!isIn(e)) return false; if(entFilter.inTag&&!(e.h===entFilter.inTag||(e.parts||[]).some(function(p){return p.h===entFilter.inTag}))) return false } else if(entFilter.h){ if(entFilter.h==='_none'){ if(e.h) return false } else if(e.h!==entFilter.h&&!(e.parts||[]).some(function(p){return p.h===entFilter.h})) return false }
+  if(entFilter.u){ var okU=(e.h===entFilter.h&&e.u===entFilter.u)||(e.parts||[]).some(function(p){return p.h===entFilter.h&&p.u===entFilter.u}); if(!okU) return false }
+  if(entFilter.daily){ var dh=function(id){var x=head(id);return x&&x.daily}; if(!(dh(e.h)||(e.parts||[]).some(function(p){return dh(p.h)}))) return false }
+  if(entFilter.shop&&shopKey(e)!==entFilter.shop) return false;
+  if(entFilter.q){var q=entFilter.q.toLowerCase(); if((e.t+' '+e.x+' '+e.r).toLowerCase().indexOf(q)<0) return false}
+  return true;
+}
+function entValue(e){ // AED this entry adds to the shown total (only the matching part of a split; money back counts as minus)
+  var r26=S.settings.inr||26, cv=function(a){return e.c==='INR'?a/r26:a};
+  if(entFilter.h==='_in') return (isIn(e)&&e.h!=='ccpay'&&e.h!=='refund'&&e.h!=='own')?aed(e):0;
+  if(e.h==='ignore'||e.h==='ccpay'||isInTag(e.h)) return 0;
+  if(isIn(e)){ var s=0; if(e.parts&&e.parts.length) e.parts.forEach(function(p){ if(head(p.h)&&(!entFilter.h||p.h===entFilter.h)) s+=cv(p.a) }); else if(head(e.h)) s=aed(e); return -s }
+  if(e.parts&&e.parts.length&&(entFilter.h||entFilter.daily)){ var v=0; e.parts.forEach(function(p){var hp=head(p.h); if((entFilter.h&&p.h===entFilter.h&&(!entFilter.u||p.u===entFilter.u))||(entFilter.daily&&hp&&hp.daily)) v+=cv(p.a)}); if(entFilter.h==='_none') v+=cv(partsLeft(e)); return v }
+  return aed(e);
+}
 function renderEntries(){
   var el=$('#v-entries');
-  var list=monthEntries(curMonth).filter(function(e){
-    if(entFilter.h==='_in'){ if(!isIn(e)) return false; if(entFilter.inTag&&!(e.h===entFilter.inTag||(e.parts||[]).some(function(p){return p.h===entFilter.inTag}))) return false } else if(entFilter.h){ if(entFilter.h==='_none'){ if(e.h) return false } else if(e.h!==entFilter.h&&!(e.parts||[]).some(function(p){return p.h===entFilter.h})) return false }
-    if(entFilter.u){ var okU=(e.h===entFilter.h&&e.u===entFilter.u)||(e.parts||[]).some(function(p){return p.h===entFilter.h&&p.u===entFilter.u}); if(!okU) return false }
-    if(entFilter.daily){ var dh=function(id){var x=head(id);return x&&x.daily}; if(!(dh(e.h)||(e.parts||[]).some(function(p){return dh(p.h)}))) return false }
-    if(entFilter.q){var q=entFilter.q.toLowerCase(); if((e.t+' '+e.x+' '+e.r).toLowerCase().indexOf(q)<0) return false}
-    return true;
-  }).sort(function(a,b){return b.d<a.d?-1:b.d>a.d?1:0});
-  var tot=0, r26=S.settings.inr||26, rec=0;
-  list.forEach(function(e){ if(e.h==='ignore'||e.h==='ccpay'||isInTag(e.h)) return;
-    if(isIn(e)&&entFilter.h!=='_in'){ var sgn=0; if(e.parts&&e.parts.length) e.parts.forEach(function(p){ if(head(p.h)&&(!entFilter.h||p.h===entFilter.h)) sgn+=e.c==='INR'?p.a/r26:p.a }); else if(head(e.h)) sgn=aed(e); tot-=sgn; return }
-    if(isIn(e)){ rec+=aed(e); return }
-    if(e.parts&&e.parts.length&&(entFilter.h||entFilter.daily)){ e.parts.forEach(function(p){var hp=head(p.h); if((entFilter.h&&p.h===entFilter.h&&(!entFilter.u||p.u===entFilter.u))||(entFilter.daily&&hp&&hp.daily)) tot+=e.c==='INR'?p.a/r26:p.a}); if(entFilter.h==='_none') tot+=partsLeft(e)*(e.c==='INR'?1/r26:1) }
-    else tot+=aed(e) });
-  var h='<div class="srch"><input class="inp" id="q" placeholder="Search shop or note" value="'+esc(entFilter.q)+'"><select class="inp" id="hf"><option value="">All heads</option>'+
+  var list=monthEntries(curMonth).filter(entMatch).sort(function(a,b){return b.d<a.d?-1:b.d>a.d?1:0});
+  var tot=0; list.forEach(function(e){tot+=entValue(e)});
+  var shops=entFilter.view==='shops'&&!entFilter.shop;
+  var h='<div class="seg"><button data-ev="list"'+(!shops?' class="on"':'')+'>📋 List</button><button data-ev="shops"'+(shops?' class="on"':'')+'>🏪 By shop</button></div>';
+  h+='<div class="srch"><input class="inp" id="q" placeholder="Search shop or note" value="'+esc(entFilter.q)+'"><select class="inp" id="hf"><option value="">All heads</option>'+
     S.heads.map(function(x){return '<option value="'+x.id+'"'+(entFilter.h===x.id?' selected':'')+'>'+esc(x.n)+'</option>'}).join('')+
     '<option value="_in"'+(entFilter.h==='_in'?' selected':'')+'>Money received</option><option value="_none"'+(entFilter.h==='_none'?' selected':'')+'>Not tagged</option><option value="ignore"'+(entFilter.h==='ignore'?' selected':'')+'>Not an expense</option></select></div>';
   var fl=[]; if(entFilter.h) fl.push(entFilter.h==='_in'?'Money received'+(entFilter.inTag?' · '+(head(entFilter.inTag)?'Back for '+head(entFilter.inTag).n:headName(entFilter.inTag)):''):headName(entFilter.h==='_none'?'':entFilter.h)); if(entFilter.u) fl.push(subName(head(entFilter.h),entFilter.u)); if(entFilter.daily) fl.push('Day-to-day heads');
+  if(entFilter.shop){ var sn=list[0]?list[0].t:entFilter.shop; fl.push('🏪 '+sn) }
   if(fl.length) h+='<div class="fbar">Showing: '+esc(fl.join(' · '))+'<button id="fclr">✕ Show all</button></div>';
-  if(entFilter.h==='_in'){ list.forEach(function(e){ if(e.h!=='ccpay'&&e.h!=='refund'&&e.h!=='own') rec+=aed(e) }); tot=rec }
+  if(entFilter.shop) h+='<button class="btn sec2 sm" style="margin-bottom:10px" id="shopBack">‹ Back to all shops</button>';
+  if(shops){ el.innerHTML=h+shopsHTML(list,tot); wireEntries(); return }
   h+='<div class="card" style="display:flex;justify-content:space-between"><span>'+list.length+' entries · '+mLabel(curMonth)+'</span><b'+(entFilter.h==='_in'?' style="color:var(--ok)"':'')+'>'+money(tot,2)+'</b></div>';
   if(!list.length) h+='<div class="empty"><b>No entries</b>Nothing for this month and filter.</div>';
   var lastD='';
@@ -1128,10 +1139,32 @@ function renderEntries(){
     var hh=head(e.h), tg=(e.parts&&e.parts.length)?'<span class="tag" style="background:var(--brand2)">Split</span> <span class="small muted">'+esc(partsText(e))+(partsLeft(e)>0.005?' · <b style="color:var(--warn)">'+fmt(partsLeft(e),2)+' left</b>':'')+'</span>':e.h==='ignore'?'<span class="tag" style="background:#9aa5a6">Not expense</span>':(e.h==='ccpay'||e.h==='refund'||e.h==='own')?'<span class="tag" style="background:#9aa5a6">'+esc(headName(e.h))+'</span>':(e.h==='salary'||e.h==='income')?'<span class="tag" style="background:var(--ok)">'+esc(headName(e.h))+'</span>':(isIn(e)&&hh)?'<span class="tag" style="background:'+hh.c+'">Back for '+esc(hh.n)+'</span>':hh?'<span class="tag" style="background:'+hh.c+'">'+esc(hh.n)+(e.u&&subName(hh,e.u)?' · '+esc(subName(hh,e.u)):'')+'</span>':'<span class="tag" style="background:var(--bad)">Not tagged</span>';
     h+='<div class="ent" data-edit="'+e.id+'" style="'+(e.h==='ignore'||e.h==='ccpay'||e.h==='refund'||e.h==='own'?'opacity:.6;':'')+(isIn(e)?'border-left:4px solid var(--ok);border-radius:0 14px 14px 0':'')+'"><div class="top"><div><div class="d">'+esc(e.t)+'</div><div class="m">'+esc(srcName(e.s))+(e.how==='auto'?' · auto-tagged':'')+(e.r?' · '+esc(e.r):'')+'</div></div><div class="a"'+(isIn(e)?' style="color:var(--ok)"':'')+'>'+(isIn(e)?'+ ':'')+amtHTML(e)+'</div></div><div style="margin-top:6px">'+tg+'</div></div>';
   });
-  el.innerHTML=h;
+  el.innerHTML=h; wireEntries();
+}
+function shopsHTML(list,tot){
+  // group this month's matching entries by shop, compare with the same shops last month
+  function group(ents){ var G={}; ents.forEach(function(e){ var v=entValue(e); if(Math.abs(v)<0.005) return; var k=shopKey(e), g=G[k]||(G[k]={k:k,v:0,n:0,names:{}}); g.v+=v; if(v>0) g.n++; g.names[e.t]=(g.names[e.t]||0)+1 }); return G }
+  var G=group(list), P=group(monthEntries(addMonth(curMonth,-1)).filter(entMatch));
+  var rows=Object.keys(G).map(function(k){var g=G[k],best='',bn=0;for(var nm in g.names) if(g.names[nm]>bn){bn=g.names[nm];best=nm} g.name=best;g.prev=P[k]?P[k].v:0;return g}).sort(function(a,b){return b.v-a.v});
+  var max=rows.length?Math.max.apply(null,rows.map(function(r){return r.v})):0;
+  var h='<div class="card" style="display:flex;justify-content:space-between"><span>'+rows.length+' shops · '+mLabel(curMonth)+'</span><b>'+money(tot,2)+'</b></div>';
+  if(!rows.length) return h+'<div class="empty"><b>No spending</b>Nothing for this month and filter.</div>';
+  h+='<div class="small muted" style="margin:0 4px 8px">Highest first. Tap a shop to see its entries. "Last month" is the same shop in '+mLabel(addMonth(curMonth,-1))+'.</div>';
+  rows.forEach(function(r){
+    var pct=tot>0?Math.round(r.v/tot*100):0, ch=r.v-r.prev, w=max>0?Math.max(2,r.v/max*100):0;
+    h+='<button class="head" data-shop="'+esc(r.k)+'" style="border-left-color:var(--brand2)"><div class="t"><span class="n">'+esc(r.name)+'</span><b>'+fmt(r.v)+'</b></div>'+
+      '<div class="bar"><i style="width:'+w+'%;background:var(--brand2)"></i></div>'+
+      '<div class="s"><span>'+r.n+' visit'+(r.n===1?'':'s')+' · '+pct+'% · avg '+fmt(r.n?r.v/r.n:0)+'</span><span>Last month '+fmt(r.prev)+(r.prev&&Math.abs(ch)>=1?' <b style="color:'+(ch>0?'var(--bad)':'var(--ok)')+'">'+(ch>0?'▲':'▼')+fmt(Math.abs(ch))+'</b>':'')+'</span></div></button>';
+  });
+  return h;
+}
+function wireEntries(){
   var q=$('#q'); q.oninput=function(){entFilter.q=q.value;clearTimeout(q._t);q._t=setTimeout(function(){var pos=q.selectionStart;renderEntries();var n=$('#q');n.focus();n.setSelectionRange(pos,pos)},350)};
-  $('#hf').onchange=function(){entFilter.h=this.value;entFilter.u='';entFilter.daily=false;renderEntries()};
-  if($('#fclr')) $('#fclr').onclick=function(){entFilter={h:'',q:'',u:'',daily:false};renderEntries()};
+  $('#hf').onchange=function(){entFilter.h=this.value;entFilter.u='';entFilter.daily=false;entFilter.shop='';renderEntries()};
+  if($('#fclr')) $('#fclr').onclick=function(){entFilter={h:'',q:'',u:'',daily:false,view:entFilter.view};renderEntries()};
+  if($('#shopBack')) $('#shopBack').onclick=function(){entFilter.shop='';entFilter.view='shops';renderEntries()};
+  $$('[data-ev]').forEach(function(b){b.onclick=function(){entFilter.view=b.dataset.ev;entFilter.shop='';renderEntries()}});
+  $$('[data-shop]').forEach(function(b){b.onclick=function(){entFilter.shop=b.dataset.shop;entFilter.view='shops';renderEntries();window.scrollTo(0,0)}});
 }
 
 /* ---------- MORE ---------- */
@@ -1141,6 +1174,7 @@ function renderMore(){
   el.innerHTML='<div class="sec">Add expenses</div><div class="list">'+
     li('import','⬆️','Import bank statement','Excel (.xls / .xlsx) or CSV – all 3 cards')+
     li('add','✏️','Add expense manually','Cash or anything not in a statement')+'</div>'+
+    '<div class="sec">Reports</div><div class="list">'+li('shopsuae','🏪','Shop-wise spending','Where the UAE money goes – shop by shop')+'</div>'+
     '<div class="sec">Budget</div><div class="list">'+
     li('budgets','🎯','Budget for '+mLabel(curMonth),'Set the amount for each head')+
     li('heads','🗂️','Heads','Rename, add, and choose day-to-day heads')+
@@ -1359,10 +1393,11 @@ function doCSV(){
 
 /* ---------- global click handling ---------- */
 document.addEventListener('click',function(ev){
-  var t=ev.target.closest('[data-close],[data-go],[data-act],[data-tag],[data-edit],[data-head],[data-split],[data-daily],[data-bd],[data-allm]'); if(!t) return;
+  var t=ev.target.closest('[data-close],[data-go],[data-act],[data-tag],[data-edit],[data-head],[data-split],[data-daily],[data-bd],[data-allm],[data-shops]'); if(!t) return;
   if(t.hasAttribute('data-close')) closeSheet();
   if(t.dataset.go){ closeSheet(); setView(t.dataset.go); }
   if(t.dataset.head){ entFilter={h:t.dataset.head,q:'',u:t.dataset.sub||'',daily:false}; closeSheet(); setView('entries'); }
+  if(t.dataset.shops){ entFilter={h:t.dataset.shops,q:'',u:'',daily:false,view:'shops'}; setView('entries'); return }
   if(t.dataset.daily){ entFilter={h:'',q:'',u:'',daily:true}; setView('entries'); }
   if(t.dataset.bd){ openBreakdown(t.dataset.bd); }
   if(t.dataset.allm){ entFilter={h:'',q:'',u:'',daily:false}; closeSheet(); setView('entries'); }
@@ -1383,6 +1418,7 @@ document.addEventListener('click',function(ev){
     setTimeout(function(){render()},200);
   }
   var a=t.dataset.act;
+  if(a==='shopsuae'){ entFilter={h:'home',q:'',u:'',daily:false,view:'shops'}; setView('entries'); }
   if(a==='import') openImport();
   else if(a==='add') openEdit(null);
   else if(a==='budgets') openBudgets();
