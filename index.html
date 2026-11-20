@@ -1354,13 +1354,22 @@ function openBudgets(){
   S.heads.forEach(function(x){h+='<div class="bud"><span><span class="dot" style="background:'+x.c+'"></span>'+esc(x.n)+'</span><input class="inp" type="number" inputmode="decimal" data-b="'+x.id+'" value="'+(budgetOf(m,x.id)||'')+'" placeholder="0"></div>'});
   h+='<div class="card small" style="display:flex;justify-content:space-between"><span>Total</span><b id="bTot"></b></div>'+
     '<button class="btn full" id="bSave">Save for '+mLabel(m)+'</button>'+
-    '<button class="btn sec2 full" style="margin-top:8px" id="bAll">Save for '+mLabel(m)+' and the next 11 months</button>';
+    '<button class="btn sec2 full" style="margin-top:8px" id="bAll">Save changes for '+mLabel(m)+' and every month after</button>'+
+    '<div class="small muted" style="margin-top:8px">"Every month after" changes only the heads you edited here – for all later months and carried forward automatically to every new month. Other heads keep their own month-by-month amounts (e.g. Rent, Insurance).</div>';
   openSheet(h);
   function tot(){var t=0;$$('[data-b]').forEach(function(i){t+=+i.value||0});$('#bTot').textContent=money(t)}
   tot(); $$('[data-b]').forEach(function(i){i.oninput=tot});
   function collect(){var o={};$$('[data-b]').forEach(function(i){o[i.dataset.b]=Math.round((+i.value||0)*100)/100});return o}
   $('#bSave').onclick=function(){S.budgets[m]=collect();S.cfgUp=now();save();closeSheet();toast('Budget saved');render()};
-  $('#bAll').onclick=function(){var o=collect();for(var k=0;k<12;k++) S.budgets[addMonth(m,k)]=JSON.parse(JSON.stringify(o));S.defBudget=o;S.cfgUp=now();save();closeSheet();toast('Saved for 12 months');render()};
+  $('#bAll').onclick=function(){
+    var o=collect(), ch=Object.keys(o).filter(function(hid){return Math.abs(o[hid]-budgetOf(m,hid))>0.005});
+    if(!ch.length){toast('Nothing changed');return}
+    if(!S.budgets[m]) S.budgets[m]=o;
+    S.defBudget=S.defBudget||{};
+    Object.keys(S.budgets).forEach(function(k){ if(k>=m) ch.forEach(function(hid){S.budgets[k][hid]=o[hid]}) });
+    ch.forEach(function(hid){S.defBudget[hid]=o[hid]});
+    S.cfgUp=now();save();closeSheet();
+    toast(ch.map(function(hid){return headName(hid)+' '+fmt(o[hid])}).join(', ')+' – from '+mLabel(m)+' onwards');render()};
 }
 function openHeads(){
   var h=title('Heads')+'<div class="small muted" style="margin-bottom:8px">“Day-to-day” heads are used for the per-day spending figure. Fixed payments like rent and school fees are not.</div>';
