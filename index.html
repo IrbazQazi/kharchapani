@@ -137,7 +137,7 @@ table.cmp{border-collapse:collapse;width:100%;font-size:13px;font-variant-numeri
 <body>
 <header>
   <div class="hrow">
-    <div class="logo">Kharcha Pani<small id="savedInfo">Saved on this phone</small></div>
+    <div class="logo">Kharcha Pani<small id="savedInfo" data-act="syncnow">Saved on this phone</small></div>
     <div class="mon"><button id="mPrev" aria-label="Previous month">‹</button><span id="mLabel"></span><button id="mNext" aria-label="Next month">›</button></div>
   </div>
 </header>
@@ -488,9 +488,17 @@ function fresh(){
   st.balances={};
   return st;
 }
+var SYNC_QUIET=false;
 function save(){
   try{localStorage.setItem(KEY,JSON.stringify(S)); storageOK=true}catch(e){storageOK=false}
-  $('#savedInfo').textContent=storageOK?'Saved on this phone ✓':'⚠ Not saving – take a backup';
+  if(!SYNC_QUIET&&typeof KPSync==='object'&&KPSync) KPSync.changed();
+  showStatus();
+}
+function showStatus(){
+  var el=$('#savedInfo'); if(!el) return;
+  if(!storageOK){el.textContent='⚠ Not saving – take a backup';return}
+  if(typeof KPSync==='object'&&KPSync&&KPSync.on()){ el.textContent=KPSync.label(); return }
+  el.textContent='Saved on this phone ✓';
 }
 S=load()||fresh(); migrate();
 try{ if(navigator.storage&&navigator.storage.persist) navigator.storage.persist(); }catch(e){}
@@ -1167,6 +1175,7 @@ function renderMore(){
     li('heads','🗂️','Heads','Rename, add, and choose day-to-day heads')+
     li('settings','⚙️','Settings','INR rate (now '+S.settings.inr+'), warning level ('+S.settings.warn+'% left)')+'</div>'+
     '<div class="sec">Share between phones</div><div class="list">'+
+    li('livesync','🔄','Live sync','Phones stay the same automatically'+(KPSync.on()?' – ON':' – off'))+
     li('send','📤','Send entries to the other phone','Makes a file to send on WhatsApp')+
     li('receive','📥','Receive entries from the other phone','Open the file you received – adds new entries, no duplicates')+'</div>'+
     '<div class="sec">Reports & safety</div><div class="list">'+
@@ -1346,6 +1355,133 @@ function mergeIn(o){
   if((inc.cfgUp||0)>(S.cfgUp||0)){S.heads=inc.heads;S.hv=inc.hv;S.budgets=inc.budgets;S.defBudget=inc.defBudget;S.settings=inc.settings;S.sources=inc.sources||{};S.cfgUp=inc.cfgUp}
   save(); learn(); return {added:added,updated:updated};
 }
+/* ---------- LIVE SYNC (encrypted file in a private GitHub repository) ---------- */
+var KPSync=(function(){
+  var CFG_KEY='kharchapani.sync', FILE='kharchapani-data.json';
+  var cfg={}; try{cfg=JSON.parse(localStorage.getItem(CFG_KEY)||'{}')}catch(e){}
+  var busy=false, again=false, dirty=!!cfg.dirty, timer=null, state='idle', errMsg='', keyCache={};
+  function saveCfg(){ cfg.dirty=dirty; try{localStorage.setItem(CFG_KEY,JSON.stringify(cfg))}catch(e){} }
+  function on(){ return !!(cfg.on&&cfg.owner&&cfg.repo&&cfg.token&&cfg.pass) }
+  function label(){
+    if(state==='busy') return 'Syncing…';
+    if(state==='error') return '⚠ Sync problem – tap';
+    if(state==='offline') return 'Offline – will sync later';
+    if(!cfg.last) return 'Live sync on';
+    var d=new Date(cfg.last); return 'Synced '+pad(d.getHours())+':'+pad(d.getMinutes())+' ✓';
+  }
+  function setState(s,m){ state=s; errMsg=m||''; showStatus(); var st=document.getElementById('syncState'); if(st) st.textContent=statusText(); }
+  function statusText(){ if(!on()) return 'Live sync is off.'; if(state==='error') return '⚠ '+errMsg; return label()+(cfg.last?' · last sync '+new Date(cfg.last).toLocaleString():''); }
+  // --- encoding + encryption ---
+  function b64(u8){ var s='',i,CH=0x8000; for(i=0;i<u8.length;i+=CH) s+=String.fromCharCode.apply(null,u8.subarray(i,i+CH)); return btoa(s) }
+  function unb64(s){ var b=atob(s.replace(/\s/g,'')), u=new Uint8Array(b.length); for(var i=0;i<b.length;i++) u[i]=b.charCodeAt(i); return u }
+  async function keyFor(salt){
+    var id=cfg.pass+'|'+b64(salt); if(keyCache[id]) return keyCache[id];
+    var base=await crypto.subtle.importKey('raw',new TextEncoder().encode(cfg.pass),'PBKDF2',false,['deriveKey']);
+    var k=await crypto.subtle.deriveKey({name:'PBKDF2',salt:salt,iterations:150000,hash:'SHA-256'},base,{name:'AES-GCM',length:256},false,['encrypt','decrypt']);
+    keyCache={}; keyCache[id]=k; return k;
+  }
+  async function seal(obj){
+    var salt=cfg.salt?unb64(cfg.salt):crypto.getRandomValues(new Uint8Array(16)); cfg.salt=b64(salt);
+    var iv=crypto.getRandomValues(new Uint8Array(12)), k=await keyFor(salt);
+    var ct=new Uint8Array(await crypto.subtle.encrypt({name:'AES-GCM',iv:iv},k,new TextEncoder().encode(JSON.stringify(obj))));
+    return JSON.stringify({app:'kharchapani-sync',v:1,salt:b64(salt),iv:b64(iv),data:b64(ct)});
+  }
+  async function open(text){
+    var o=JSON.parse(text); if(o.app!=='kharchapani-sync') throw new Error('The online file is not a Kharcha Pani sync file.');
+    var salt=unb64(o.salt); cfg.salt=o.salt;
+    try{ var pt=await crypto.subtle.decrypt({name:'AES-GCM',iv:unb64(o.iv)},await keyFor(salt),unb64(o.data)); }
+    catch(e){ var er=new Error('The family password does not match the online data.'); er.pass=1; throw er }
+    return JSON.parse(new TextDecoder().decode(pt));
+  }
+  // --- canonical form, to know whether the online copy is already the same ---
+  function stable(v){ if(Array.isArray(v)) return '['+v.map(stable).join(',')+']'; if(v&&typeof v==='object') return '{'+Object.keys(v).filter(function(k){return v[k]!==undefined}).sort().map(function(k){return JSON.stringify(k)+':'+stable(v[k])}).join(',')+'}'; return JSON.stringify(v===undefined?null:v) }
+  function canon(st){ return stable({e:st.entries.slice().sort(function(a,b){return a.id<b.id?-1:1}),d:(st.deleted||[]).slice().sort(),h:st.heads,b:st.budgets,db:st.defBudget,s:st.settings,src:st.sources||{},c:st.cfgUp||0,bal:st.balances||{},hv:st.hv}) }
+  function shared(){ var c=JSON.parse(JSON.stringify(S)); delete c.lastBackup; return c }
+  // --- GitHub ---
+  function api(path,opt){ opt=opt||{}; opt.headers=Object.assign({'Authorization':'Bearer '+cfg.token,'Accept':'application/vnd.github+json','X-GitHub-Api-Version':'2022-11-28'},opt.headers||{}); opt.cache='no-store';
+    return fetch('https://api.github.com/repos/'+encodeURIComponent(cfg.owner)+'/'+encodeURIComponent(cfg.repo)+path,opt) }
+  async function getRemote(){
+    var h={}; if(cfg.etag&&cfg.sha&&!cfg.force) h['If-None-Match']=cfg.etag;
+    var r=await api('/contents/'+FILE,{headers:h});
+    if(r.status===304) return {same:true};
+    if(r.status===404){ var rr=await api(''); if(rr.status===404) throw new Error('Repository "'+cfg.repo+'" not found, or the access key cannot see it.'); if(rr.status===401) throw new Error('The access key was not accepted.'); return {none:true} }
+    if(r.status===401) throw new Error('The access key was not accepted (it may have expired).');
+    if(!r.ok) throw new Error('GitHub answered '+r.status+'.');
+    var j=await r.json(), text;
+    if(j.content) text=new TextDecoder().decode(unb64(j.content));
+    else { var raw=await api('/contents/'+FILE,{headers:{'Accept':'application/vnd.github.raw'}}); text=await raw.text() }
+    return {sha:j.sha,etag:r.headers.get('ETag'),text:text};
+  }
+  async function putRemote(sha){
+    var body={message:'Kharcha Pani sync '+new Date().toISOString(),content:b64(new TextEncoder().encode(await seal({app:'kharchapani',v:1,at:Date.now(),state:shared()})))};
+    if(sha) body.sha=sha;
+    var r=await api('/contents/'+FILE,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    if(r.status===409||r.status===422){ var e=new Error('conflict'); e.conflict=1; throw e }
+    if(r.status===401||r.status===403) throw new Error('The access key cannot write to "'+cfg.repo+'". It needs Contents: Read and write.');
+    if(!r.ok) throw new Error('GitHub answered '+r.status+' while saving.');
+    var j=await r.json(); cfg.sha=j.content&&j.content.sha; cfg.etag=null;
+  }
+  async function run(){
+    if(!on()) return;
+    if(busy){ again=true; return }
+    if(navigator.onLine===false){ setState('offline'); return }
+    busy=true; setState('busy');
+    try{
+      for(var attempt=0;attempt<4;attempt++){
+        var wasDirty=dirty; dirty=false; saveCfg();
+        var rem=await getRemote(), got=null;
+        if(rem.same){ if(!wasDirty) break; try{ await putRemote(cfg.sha); break }catch(e){ if(e.conflict){cfg.force=1;dirty=true;continue} dirty=true; throw e } }
+        if(!rem.none){
+          var o=await open(rem.text); cfg.force=0;
+          SYNC_QUIET=true; try{ got=mergeIn(o); migrate(); }finally{ SYNC_QUIET=false }
+          cfg.sha=rem.sha; cfg.etag=rem.etag;
+          if(got.added||got.updated) render();
+          if(canon(shared())===canon(o.state)) break;
+        }
+        try{ await putRemote(rem.none?null:cfg.sha); break }catch(e){ if(e.conflict){cfg.force=1;dirty=true;continue} dirty=true; throw e }
+      }
+      cfg.last=Date.now(); saveCfg(); setState('ok');
+    }catch(e){
+      if(e&&e.name==='TypeError'&&/fetch|network/i.test(e.message)) setState('offline'); else setState('error',e.message||String(e));
+      saveCfg();
+    }finally{ busy=false; if(again){ again=false; setTimeout(run,500) } }
+  }
+  function changed(){ if(!on()) return; dirty=true; saveCfg(); clearTimeout(timer); timer=setTimeout(run,2500) }
+  setInterval(function(){ if(on()&&document.visibilityState==='visible') run() },30000);
+  document.addEventListener('visibilitychange',function(){ if(document.visibilityState==='visible') run() });
+  window.addEventListener('online',function(){ run() });
+  function config(c){ var same=c.owner===cfg.owner&&c.repo===cfg.repo&&c.pass===cfg.pass;
+    cfg=Object.assign({},same?cfg:{},c); if(!same){ delete cfg.sha; delete cfg.etag; delete cfg.salt; delete cfg.last; keyCache={} } dirty=true; saveCfg(); return run() }
+  function off(){ cfg.on=false; saveCfg(); setState('idle'); }
+  return {on:on,label:label,changed:changed,run:run,config:config,off:off,get cfg(){return cfg},statusText:statusText,_open:open,_seal:seal};
+})();
+setTimeout(function(){ showStatus(); KPSync.run() },800);
+
+function openSync(){
+  var c=KPSync.cfg;
+  var h=title('Live sync')+'<div class="small muted">Keeps this phone and your family\'s phones the same automatically. Your data is locked with the family password before it goes to your private GitHub repository – nobody can read it without that password.</div>'+
+    '<div class="card small" id="syncState" style="margin-top:10px">'+esc(KPSync.statusText())+'</div>'+
+    '<label class="f">GitHub username</label><input class="inp" id="syO" value="'+esc(c.owner||'IrbazQazi')+'" autocapitalize="off" autocorrect="off">'+
+    '<label class="f">Private data repository</label><input class="inp" id="syR" value="'+esc(c.repo||'kharchapani-data')+'" autocapitalize="off" autocorrect="off">'+
+    '<label class="f">Access key (from GitHub)</label><input class="inp" id="syT" type="password" value="'+esc(c.token||'')+'" placeholder="github_pat_…" autocapitalize="off" autocorrect="off">'+
+    '<label class="f">Family password (same on every phone)</label><input class="inp" id="syP" type="password" value="'+esc(c.pass||'')+'" autocapitalize="off" autocorrect="off">'+
+    '<label class="small" style="display:flex;gap:8px;align-items:center;margin-top:8px"><input type="checkbox" id="sySh"> Show key and password</label>'+
+    '<button class="btn full" style="margin-top:14px" id="syGo">'+(KPSync.on()?'Save and sync now':'Turn on live sync')+'</button>'+
+    (KPSync.on()?'<button class="btn sec2 full" style="margin-top:8px" id="syNow">Sync now</button><button class="btn danger full" style="margin-top:8px" id="syOff">Turn off live sync on this phone</button>':'')+
+    '<div class="small muted" style="margin-top:12px">Syncs when you make a change, when you open the app, and every 30 seconds while it is open. Without internet it waits and syncs later.</div>';
+  openSheet(h);
+  $('#sySh').onchange=function(){var ty=this.checked?'text':'password';$('#syT').type=ty;$('#syP').type=ty};
+  $('#syGo').onclick=async function(){
+    var o=$('#syO').value.trim(),r=$('#syR').value.trim(),tk=$('#syT').value.trim(),pw=$('#syP').value;
+    if(!o||!r||!tk||!pw){toast('Please fill in all four boxes');return}
+    if(pw.length<6){toast('Use a family password of at least 6 characters');return}
+    this.textContent='Connecting…'; await KPSync.config({on:true,owner:o,repo:r,token:tk,pass:pw});
+    if(/⚠/.test(KPSync.statusText())){ $('#syncState').textContent=KPSync.statusText(); this.textContent='Try again' } else { closeSheet(); toast('Live sync is on ✓'); render() }
+  };
+  if($('#syNow')) $('#syNow').onclick=async function(){ this.textContent='Syncing…'; await KPSync.run(); this.textContent='Sync now'; $('#syncState').textContent=KPSync.statusText() };
+  if($('#syOff')) $('#syOff').onclick=function(){ if(!confirmInline(this,'Tap again to turn off')) return; KPSync.off(); closeSheet(); toast('Live sync turned off on this phone') };
+}
+
 var syncMode='merge';
 $('#fileSync').onchange=async function(){
   var f=this.files[0]; if(!f) return;
@@ -1406,6 +1542,8 @@ document.addEventListener('click',function(ev){
   }
   var a=t.dataset.act;
   if(a==='shopsuae'){ entFilter={h:'home',q:'',u:'',daily:false,view:'shops'}; setView('entries'); }
+  if(a==='livesync'){ openSync(); }
+  if(a==='syncnow'){ if(KPSync.on()) KPSync.run(); else { setView('more') } }
   if(a==='import') openImport();
   else if(a==='add') openEdit(null);
   else if(a==='budgets') openBudgets();
@@ -1432,7 +1570,7 @@ function render(){
   if(curView==='home') renderHome(); else if(curView==='review') renderReview(); else if(curView==='entries') renderEntries(); else if(curView==='compare') renderCompare(); else if(curView==='flow') renderFlow(); else renderMore();
 }
 save(); learn(); render();
-window.__KP={get S(){return S},learn:function(){learn()},bank:function(m,s){return bankCheck(m,s)},flow:function(m){return flowCalc(m)},importParsed:importParsed,analyse:analyse,calc:calc,suggest:suggest,setMonth:function(m){curMonth=m;render()},setView:setView};
+window.__KP={get S(){return S},save:function(){save()},syncConfig:function(c){return KPSync.config(c)},syncRun:function(){return KPSync.run()},syncStatus:function(){return KPSync.label()},syncState:function(){return KPSync.statusText()},learn:function(){learn()},bank:function(m,s){return bankCheck(m,s)},flow:function(m){return flowCalc(m)},importParsed:importParsed,analyse:analyse,calc:calc,suggest:suggest,setMonth:function(m){curMonth=m;render()},setView:setView};
 })();
 </script>
 <script>
