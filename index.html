@@ -102,6 +102,16 @@ label.f{display:block;font-size:12.5px;font-weight:700;color:var(--muted);margin
 .srch .inp{padding:9px 12px}
 .srch select.inp{max-width:42%}
 .saved{font-size:11px;opacity:.75}
+#lock{position:fixed;inset:0;z-index:100;background:var(--brand);color:#fff;display:flex;align-items:center;justify-content:center;padding:20px}
+.lk-in{width:100%;max-width:320px;text-align:center}
+.lk-logo{font-size:40px}.lk-t{font-size:22px;font-weight:800;margin-top:6px}.lk-s{opacity:.85;margin:10px 0 16px;min-height:20px}
+.lk-dots{display:flex;gap:14px;justify-content:center;margin-bottom:26px;min-height:16px}
+.lk-dots i{width:14px;height:14px;border-radius:50%;border:2px solid #fff;display:block}.lk-dots i.f{background:#fff}
+.lk-pad{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+.lk-pad button{height:64px;border-radius:50%;border:0;background:rgba(255,255,255,.14);color:#fff;font-size:26px;font-weight:600}
+.lk-pad button:active{background:rgba(255,255,255,.3)}
+.lk-forgot{margin-top:22px;background:none;border:0;color:#fff;opacity:.75;text-decoration:underline;font-size:14px}
+body.locked main,body.locked nav,body.locked header,body.locked .fab{visibility:hidden}
 .tap{cursor:pointer;border:0;background:none;color:inherit;font:inherit;text-align:inherit;padding:0;width:100%}
 .tap.big{font-size:34px;font-weight:800;letter-spacing:-.5px;line-height:1.1;display:block;margin-top:2px}
 .tap.big::after{content:' ›';font-size:22px;opacity:.6}
@@ -164,6 +174,21 @@ table.cmp{border-collapse:collapse;width:100%;font-size:13px;font-variant-numeri
 
 <div class="sheetbg" id="sheetbg"><div class="sheet" id="sheet"></div></div>
 <div class="toast" id="toast"></div>
+<div id="lock" style="display:none">
+  <div class="lk-in">
+    <div class="lk-logo">🔒</div>
+    <div class="lk-t">Kharcha Pani</div>
+    <div class="lk-s" id="lkMsg">Enter your PIN</div>
+    <div class="lk-dots" id="lkDots"></div>
+    <div class="lk-pad">
+      <button data-k="1">1</button><button data-k="2">2</button><button data-k="3">3</button>
+      <button data-k="4">4</button><button data-k="5">5</button><button data-k="6">6</button>
+      <button data-k="7">7</button><button data-k="8">8</button><button data-k="9">9</button>
+      <button data-k="bio" id="lkBio" aria-label="Use fingerprint">👆</button><button data-k="0">0</button><button data-k="del" aria-label="Delete">⌫</button>
+    </div>
+    <button class="lk-forgot" id="lkForgot">Forgot PIN?</button>
+  </div>
+</div>
 <input type="file" id="fileStmt" accept=".xls,.xlsx,.csv,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv" multiple hidden>
 <input type="file" id="fileSync" hidden>
 
@@ -1243,6 +1268,7 @@ function renderMore(){
     li('heads','🗂️','Heads','Rename, add, and choose day-to-day heads')+
     li('settings','⚙️','Settings','INR rate (now '+S.settings.inr+'), warning level ('+S.settings.warn+'% left)')+'</div>'+
     '<div class="sec">Share between phones</div><div class="list">'+
+    li('applock','🔒','App lock',(KPLock.on()?'On – PIN'+(KPLock.cfg.bio?' + fingerprint':''):'Off – set a PIN to open the app'))+
     li('livesync','🔄','Live sync','Phones stay the same automatically'+(KPSync.on()?' – ON':' – off'))+
     li('send','📤','Send entries to the other phone','Makes a file to send on WhatsApp')+
     li('receive','📥','Receive entries from the other phone','Open the file you received – adds new entries, no duplicates')+'</div>'+
@@ -1534,6 +1560,87 @@ var KPSync=(function(){
 })();
 setTimeout(function(){ showStatus(); KPSync.run() },800);
 
+/* ---------- APP LOCK (PIN / fingerprint, this phone only) ---------- */
+var KPLock=(function(){
+  var LK='kharchapani.lock', c={}; try{c=JSON.parse(localStorage.getItem(LK)||'{}')}catch(e){}
+  var entry='', hiddenAt=0, fails=0, waitUntil=0, mode='unlock', setFirst='', onSet=null;
+  function saveC(){ try{localStorage.setItem(LK,JSON.stringify(c))}catch(e){} }
+  function on(){ return !!c.hash }
+  async function hash(pin,salt){ var b=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(salt+'|'+pin)); return Array.prototype.map.call(new Uint8Array(b),function(x){return ('0'+x.toString(16)).slice(-2)}).join('') }
+  function dots(){ var n=mode==='unlock'?(c.len||4):6, h=''; for(var i=0;i<Math.max(n,entry.length);i++) h+='<i class="'+(i<entry.length?'f':'')+'"></i>'; $('#lkDots').innerHTML=h }
+  function show(m,msg){ mode=m||'unlock'; entry=''; document.body.classList.add('locked'); $('#lock').style.display='flex'; $('#lkMsg').textContent=msg||'Enter your PIN';
+    $('#lkBio').style.visibility=(mode==='unlock'&&c.bio)?'visible':'hidden'; $('#lkForgot').style.display=mode==='unlock'?'':'none'; dots();
+    if(mode==='unlock'&&c.bio) setTimeout(bio,300); }
+  function hide(){ $('#lock').style.display='none'; document.body.classList.remove('locked'); entry='' }
+  async function check(){
+    if(Date.now()<waitUntil){ $('#lkMsg').textContent='Too many tries – wait '+Math.ceil((waitUntil-Date.now())/1000)+' s'; entry=''; dots(); return }
+    if(await hash(entry,c.salt)===c.hash){ fails=0; hide(); return }
+    fails++; entry=''; dots(); if(fails>=5){ waitUntil=Date.now()+30000; fails=0 }
+    $('#lkMsg').textContent='Wrong PIN – try again'; if(navigator.vibrate) try{navigator.vibrate(150)}catch(e){}
+  }
+  async function key(k){
+    if(k==='del'){ entry=entry.slice(0,-1); dots(); return }
+    if(k==='bio'){ bio(); return }
+    if(entry.length>=6) return; entry+=k; dots();
+    if(mode==='unlock'){ if(entry.length===(c.len||4)) await check(); return }
+    if(mode==='set1'&&entry.length===c._newLen){ setFirst=entry; show('set2','Enter the same PIN again') }
+    else if(mode==='set2'&&entry.length===c._newLen){
+      if(entry!==setFirst){ show('set1','PINs did not match – choose a PIN again'); return }
+      c.salt=Math.random().toString(36).slice(2)+Date.now().toString(36); c.hash=await hash(entry,c.salt); c.len=entry.length; delete c._newLen; saveC(); hide(); toast('App lock is on 🔒'); if(onSet) onSet(); }
+  }
+  async function bio(){
+    if(!c.bio||!window.PublicKeyCredential) return;
+    try{ await navigator.credentials.get({publicKey:{challenge:crypto.getRandomValues(new Uint8Array(32)),allowCredentials:[{type:'public-key',id:unb64(c.bio)}],userVerification:'required',timeout:60000}}); fails=0; hide(); }
+    catch(e){ $('#lkMsg').textContent='Fingerprint not recognised – enter your PIN' }
+  }
+  function unb64(s){ var b=atob(s), u=new Uint8Array(b.length); for(var i=0;i<b.length;i++) u[i]=b.charCodeAt(i); return u }
+  async function addBio(){
+    if(!window.PublicKeyCredential||!(await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable().catch(function(){return false}))) { toast('Fingerprint is not available in this app on this phone'); return false }
+    try{ var cr=await navigator.credentials.create({publicKey:{challenge:crypto.getRandomValues(new Uint8Array(32)),rp:{name:'Kharcha Pani'},user:{id:crypto.getRandomValues(new Uint8Array(16)),name:'kharchapani',displayName:'Kharcha Pani'},
+      pubKeyCredParams:[{type:'public-key',alg:-7},{type:'public-key',alg:-257}],authenticatorSelection:{authenticatorAttachment:'platform',userVerification:'required',residentKey:'discouraged'},timeout:60000}});
+      var u=new Uint8Array(cr.rawId), s=''; for(var i=0;i<u.length;i++) s+=String.fromCharCode(u[i]); c.bio=btoa(s); saveC(); return true }
+    catch(e){ toast('Fingerprint was not set up'); return false }
+  }
+  document.addEventListener('click',function(ev){ var b=ev.target.closest('#lock [data-k]'); if(b) key(b.dataset.k) });
+  document.addEventListener('keydown',function(ev){ if($('#lock').style.display!=='flex') return; if(/^[0-9]$/.test(ev.key)) key(ev.key); else if(ev.key==='Backspace') key('del') });
+  $('#lkForgot').onclick=function(){
+    var b=this; if(!b.dataset.armed){ b.dataset.armed=1; b.textContent='Tap again to ERASE this phone\'s data and remove the PIN'; setTimeout(function(){b.textContent='Forgot PIN?';delete b.dataset.armed},5000); return }
+    try{ localStorage.removeItem(LK); localStorage.removeItem('kharchapani.sync'); localStorage.removeItem(KEY) }catch(e){} location.reload();
+  };
+  document.addEventListener('visibilitychange',function(){
+    if(!on()) return;
+    if(document.visibilityState==='hidden') hiddenAt=Date.now();
+    else if(hiddenAt&&Date.now()-hiddenAt>=(c.after==null?60000:c.after)) show('unlock');
+  });
+  if(on()) show('unlock');
+  return {on:on, get cfg(){return c}, setPin:function(len,cb){ c._newLen=len; onSet=cb; show('set1','Choose a '+len+'-digit PIN') },
+    verifyThen:function(fn){ if(!on()){fn();return} var old=hide; show('unlock','Enter your current PIN'); var iv=setInterval(function(){ if($('#lock').style.display!=='flex'){clearInterval(iv);fn()} },200) },
+    off:function(){ c={}; saveC() }, setAfter:function(ms){ c.after=ms; saveC() }, addBio:addBio, removeBio:function(){ delete c.bio; saveC() }, lockNow:function(){ if(on()) show('unlock') }};
+})();
+
+function openLock(){
+  var c=KPLock.cfg, on=KPLock.on();
+  var h=title('App lock')+'<div class="small muted">Asks for a PIN'+(window.PublicKeyCredential?' or fingerprint':'')+' when the app is opened. Set it on each phone separately – it is not shared by live sync.</div>'+
+    '<div class="card small" style="margin-top:10px">'+(on?'🔒 App lock is <b>on</b> ('+c.len+'-digit PIN'+(c.bio?' + fingerprint':'')+').':'🔓 App lock is <b>off</b>.')+'</div>';
+  if(!on) h+='<button class="btn full" id="lkSet4">Set a 4-digit PIN</button><button class="btn sec2 full" style="margin-top:8px" id="lkSet6">Set a 6-digit PIN</button>';
+  else {
+    h+='<label class="f">Lock again when the app was away for</label><select class="inp" id="lkAfter">'+[[0,'Every time (immediately)'],[60000,'1 minute'],[300000,'5 minutes'],[900000,'15 minutes']].map(function(o){return '<option value="'+o[0]+'"'+((c.after==null?60000:c.after)===o[0]?' selected':'')+'>'+o[1]+'</option>'}).join('')+'</select>'+
+      (window.PublicKeyCredential?(c.bio?'<button class="btn sec2 full" style="margin-top:12px" id="lkBioOff">Stop using fingerprint</button>':'<button class="btn full" style="margin-top:12px" id="lkBioOn">👆 Also unlock with fingerprint</button>'):'')+
+      '<button class="btn sec2 full" style="margin-top:8px" id="lkChange">Change PIN</button><button class="btn sec2 full" style="margin-top:8px" id="lkNow">Lock now</button><button class="btn danger full" style="margin-top:8px" id="lkOff">Turn off app lock</button>';
+  }
+  h+='<div class="small muted" style="margin-top:12px">If you forget the PIN, the lock screen can erase this phone\'s data. With live sync on, everything comes back after you enter the access key and family password again.</div>';
+  openSheet(h);
+  function after(){ render(); openLock() }
+  if($('#lkSet4')) $('#lkSet4').onclick=function(){ closeSheet(); KPLock.setPin(4,after) };
+  if($('#lkSet6')) $('#lkSet6').onclick=function(){ closeSheet(); KPLock.setPin(6,after) };
+  if($('#lkAfter')) $('#lkAfter').onchange=function(){ KPLock.setAfter(+this.value); toast('Saved') };
+  if($('#lkBioOn')) $('#lkBioOn').onclick=async function(){ if(await KPLock.addBio()){ toast('Fingerprint unlock is on 👆'); openLock() } };
+  if($('#lkBioOff')) $('#lkBioOff').onclick=function(){ KPLock.removeBio(); openLock() };
+  if($('#lkChange')) $('#lkChange').onclick=function(){ closeSheet(); KPLock.verifyThen(function(){ var len=KPLock.cfg.len||4, bioId=KPLock.cfg.bio, aft=KPLock.cfg.after; KPLock.off(); if(bioId) KPLock.cfg.bio=bioId; if(aft!=null) KPLock.setAfter(aft); KPLock.setPin(len,after) }) };
+  if($('#lkNow')) $('#lkNow').onclick=function(){ closeSheet(); KPLock.lockNow() };
+  if($('#lkOff')) $('#lkOff').onclick=function(){ closeSheet(); KPLock.verifyThen(function(){ KPLock.off(); toast('App lock turned off'); render() }) };
+}
+
 function openSync(){
   var c=KPSync.cfg;
   var h=title('Live sync')+'<div class="small muted">Keeps this phone and your family\'s phones the same automatically. Your data is locked with the family password before it goes to your private GitHub repository – nobody can read it without that password.</div>'+
@@ -1621,6 +1728,7 @@ document.addEventListener('click',function(ev){
   var a=t.dataset.act;
   if(a==='shopsuae'){ entFilter={h:'home',q:'',u:'',daily:false,view:'shops'}; setView('entries'); }
   if(a==='livesync'){ openSync(); }
+  if(a==='applock'){ openLock(); }
   if(a==='syncnow'){ if(KPSync.on()) KPSync.run(); else { setView('more') } }
   if(a==='import') openImport();
   else if(a==='add') openEdit(null);
