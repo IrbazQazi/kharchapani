@@ -830,7 +830,7 @@ function status(sp,b){var w=(S.settings.warn||20)/100; if(b<=0) return sp>0?'non
 
 /* ---------- HOME ---------- */
 function renderHome(){
-  var c=calcP(), prev=calcP(prevSel()), el=$('#v-home'), h='';
+  var c=onlyBudgeted(calcP()), prev=calcP(prevSel()), el=$('#v-home'), h='';
   var rem=c.tb-c.ts, pct=c.tb>0?Math.min(100,c.ts/c.tb*100):0, st=status(c.ts,c.tb);
   var need=S.entries.filter(function(e){return !e.h}).length;
   if(!storageOK) h+='<div class="alert bad">⚠️ This browser is not saving data. Use <b>More → Full backup</b> after every update.</div>';
@@ -846,7 +846,7 @@ function renderHome(){
     h+='<div class="card" data-bd="remaining" style="cursor:pointer"><div class="daily"><div><div class="small muted">'+(c.multi?'Period total':'Month closed')+'</div><div class="v">'+(rem>=0?'Saved '+money(rem):'Over by '+money(-rem))+'</div></div><span class="pill '+(rem>=0?'ok':'bad')+'">'+(rem>=0?'Within budget':'Exceeded')+'</span></div></div>';
   }
     h+='<div class="sec">Heads</div>';
-  var shown=S.heads.filter(function(x){var p=c.per[x.id];return p.budget>0||p.spent>0});
+  var shown=S.heads.filter(function(x){var p=c.per[x.id];return !CMP_SKIP[x.id]&&(p.budget>0||p.spent>0)});
   if(!shown.length&&!c.untagN) h+='<div class="empty"><b>Nothing here yet</b>Import a bank statement or tap + to add an expense.</div>';
   shown.forEach(function(x){
     var p=c.per[x.id], s=status(p.spent,p.budget), w=p.budget>0?Math.min(100,p.spent/p.budget*100):100, pp=prev.per[x.id];
@@ -860,16 +860,17 @@ function renderHome(){
     h+='</button>';
   });
   if(c.untagN) h+='<button class="head" data-go="review" style="border-left-color:#bbb"><div class="t"><span class="n">Not tagged yet</span><b>'+fmt(c.untag)+'</b></div><div class="s"><span>'+c.untagN+' entries – counted in Spent. Tap to tag.</span></div></button>';
+  h+='<p class="small muted" style="margin:10px 4px 0">Budgeted expenses only. CC, Irbaz Office, Investment and Loan are in <b>In &amp; Out</b>.</p>';
   h+='<div class="row2" style="margin-top:14px"><button class="btn" data-act="import">⬆️ Import statement</button><button class="btn sec2" data-act="add">✏️ Add manually</button></div>';
   el.innerHTML=h;
 }
 
 /* ---------- BREAKDOWN (tap a number on Home) ---------- */
 function openBreakdown(kind){
-  var c=calcP(), T={budget:'Budget',spent:'Spent',remaining:'Remaining'}[kind];
+  var c=onlyBudgeted(calcP()), T={budget:'Budget',spent:'Spent',remaining:'Remaining'}[kind];
   var h=title(T+' · '+periodLabel())+'<div class="small muted" style="margin-bottom:8px">Tap a head to see its entries.</div><div class="tblw" style="max-height:none"><table class="cmp"><thead><tr><th>Head</th><th>Budget</th><th>Spent</th><th>Left</th></tr></thead><tbody>';
   function cell(v,k,cls){return '<td'+(k===kind?' style="font-weight:800"':'')+(cls?' class="'+cls+'"':'')+'>'+(Math.abs(v)>0.005?fmt(v):'–')+'</td>'}
-  var rows=S.heads.filter(function(x){var p=c.per[x.id];return p.budget>0||p.spent>0});
+  var rows=S.heads.filter(function(x){var p=c.per[x.id];return !CMP_SKIP[x.id]&&(p.budget>0||p.spent>0)});
   if(kind==='spent') rows.sort(function(a,b){return c.per[b.id].spent-c.per[a.id].spent});
   if(kind==='budget') rows.sort(function(a,b){return c.per[b.id].budget-c.per[a.id].budget});
   if(kind==='remaining') rows.sort(function(a,b){var pa=c.per[a.id],pb=c.per[b.id];return (pa.budget-pa.spent)-(pb.budget-pb.spent)});
@@ -950,6 +951,7 @@ function guessSub(e,hh){var txt=e.t+' '+e.x;for(var i=0;i<KW.length;i++) if(KW[i
 /* ---------- COMPARE (budget vs actual table, like the Excel SUM sheet) ---------- */
 var cmpOpt={n:2,diff:false};
 var CMP_SKIP={cc:1,office:1,invest:1,loan:1}; // not budgeted expenses – balance-sheet items, left out of the budget comparison
+function onlyBudgeted(c){ var T=cmpTot(c); c.tb=T.tb; c.ts=T.ts; return c }
 function cmpTot(c){ var tb=0,ts=c.untag; S.heads.forEach(function(x){ if(CMP_SKIP[x.id]) return; tb+=c.per[x.id].budget; ts+=c.per[x.id].spent }); return {tb:tb,ts:ts} }
 function renderCompare(){
   var el=$('#v-compare'), months=[];
@@ -1568,10 +1570,10 @@ $('#fileSync').onchange=async function(){
   }catch(err){toast('Could not open file: '+(err.message||err))}
 };
 function monthSummary(){
-  var c=calcP(), L=['*Kharcha Pani – '+periodLabel()+'*','Budget: '+money(c.tb),'Spent: '+money(c.ts),'Remaining: '+money(c.tb-c.ts)];
+  var c=onlyBudgeted(calcP()), L=['*Kharcha Pani – '+periodLabel()+'*','Budget: '+money(c.tb),'Spent: '+money(c.ts),'Remaining: '+money(c.tb-c.ts)];
   if(c.dl>0) L.push('Days left: '+c.dl+' · Day-to-day per day: '+money(Math.max(0,(c.db-c.ds)/c.dl)));
   L.push('');
-  S.heads.forEach(function(x){var p=c.per[x.id]; if(p.budget>0||p.spent>0){var s=status(p.spent,p.budget); L.push((s==='bad'?'🔴':s==='warn'?'🟠':'🟢')+' '+x.n+': '+fmt(p.spent)+(p.budget>0?' / '+fmt(p.budget):''))}});
+  S.heads.forEach(function(x){var p=c.per[x.id]; if(!CMP_SKIP[x.id]&&(p.budget>0||p.spent>0)){var s=status(p.spent,p.budget); L.push((s==='bad'?'🔴':s==='warn'?'🟠':'🟢')+' '+x.n+': '+fmt(p.spent)+(p.budget>0?' / '+fmt(p.budget):''))}});
   if(c.untagN) L.push('⚪ Not tagged: '+fmt(c.untag)+' ('+c.untagN+')');
   return L.join('\n');
 }
