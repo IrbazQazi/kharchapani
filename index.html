@@ -795,22 +795,9 @@ function renderHome(){
      '<button class="tap big" data-bd="remaining"><small>AED</small>'+fmt(rem)+'</button>'+
      '<div class="bar"><i style="width:'+pct+'%;background:'+(st==='bad'?'#ff8a80':st==='warn'?'#ffcc66':'#8be0a8')+'"></i></div>'+
      '<div class="grid3"><button class="tap" data-bd="budget"><span>Budget</span><b>'+fmt(c.tb)+'</b></button><button class="tap" data-bd="spent"><span>Spent</span><b>'+fmt(c.ts)+'</b></button><div><span>Days left</span><b>'+c.dl+(c.isCur?' <small style="font-weight:500;font-size:11px">of '+c.dim+'</small>':'')+'</b></div></div></div>';
-  // daily allowance on day-to-day heads
-  var drem=c.db-c.ds;
-  if(c.dl>0){
-    var perDay=drem/c.dl, exp=c.db*(c.dayNo/c.dim), pace=c.ds-exp, dn=S.heads.filter(function(x){return x.daily}).map(function(x){return x.n}).join(', ');
-    var pc= drem<0?'bad':(pace>c.db*0.05?'warn':'ok');
-    h+='<div class="card" data-daily="1" style="cursor:pointer"><div class="daily"><div><div class="small muted">You can comfortably spend</div><div class="v">'+(drem<0?'AED 0':money(perDay))+' <span class="small muted" style="font-weight:600">/ day</span></div></div>'+
-       '<span class="pill '+pc+'">'+(drem<0?'Over budget':pc==='warn'?'Spending fast':'On track')+'</span></div>'+
-       '<div class="small muted" style="margin-top:6px">Day-to-day heads ('+esc(dn)+'): '+money(drem)+' left for '+c.dl+' day'+(c.dl>1?'s':'')+'.'+
-       (c.isCur&&c.dayNo>0?' By today the plan was '+money(exp)+', you spent '+money(c.ds)+(pace>0?' — <b style="color:var(--warn)">'+money(pace)+' ahead of plan</b>.':' — '+money(-pace)+' under plan 👍'):'')+'</div></div>';
-  } else if(c.isPast){
+  if(c.isPast){
     h+='<div class="card" data-bd="remaining" style="cursor:pointer"><div class="daily"><div><div class="small muted">Month closed</div><div class="v">'+(rem>=0?'Saved '+money(rem):'Over by '+money(-rem))+'</div></div><span class="pill '+(rem>=0?'ok':'bad')+'">'+(rem>=0?'Within budget':'Exceeded')+'</span></div></div>';
   }
-  // warnings
-  var warns=S.heads.filter(function(x){var p=c.per[x.id];return status(p.spent,p.budget)==='bad'||status(p.spent,p.budget)==='warn'});
-  warns.forEach(function(x){var p=c.per[x.id],s=status(p.spent,p.budget);
-    h+='<div class="alert '+s+'" data-head="'+x.id+'" style="cursor:pointer">'+(s==='bad'?'🔴 <span><b>'+esc(x.n)+'</b> is over budget by '+money(p.spent-p.budget)+'</span>':'🟠 <span><b>'+esc(x.n)+'</b>: only '+money(p.budget-p.spent)+' left ('+Math.round((p.budget-p.spent)/p.budget*100)+'%)</span>')+'</div>'});
     h+='<div class="sec">Heads</div>';
   var shown=S.heads.filter(function(x){var p=c.per[x.id];return p.budget>0||p.spent>0});
   if(!shown.length&&!c.untagN) h+='<div class="empty"><b>Nothing here yet</b>Import a bank statement or tap + to add an expense.</div>';
