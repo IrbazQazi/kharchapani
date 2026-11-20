@@ -444,9 +444,9 @@ var SEED = {"budgets":{},"hist":[]};
 var KEY='kharchapani.v1';
 var BAD_STATUS=/^(REVERSED|DROPPED|REFUNDED|REJECTED|FAILED|CANCELL?ED|DECLINED|VOID)/i;
 var HEADS_VERSION=3;
-var IN_TAGS=[['salary','Salary'],['income','Other income'],['refund','Refund / cashback'],['own','Not income (own money)']];
+var IN_TAGS=[['salary','Salary'],['income','Other income'],['borrow','Loan taken (borrowed)'],['refund','Refund / cashback'],['own','Not income (own money)']];
 function isIn(e){return e.io==='in'}
-function isInTag(id){return id==='salary'||id==='income'||id==='refund'||id==='own'}
+function isInTag(id){return id==='salary'||id==='income'||id==='borrow'||id==='refund'||id==='own'}
 var DEFAULT_HEADS=[
  {id:'rent',n:'Rent',c:'#7f5539',daily:false},
  {id:'home',n:'UAE',c:'#1f8a4c',daily:true,subs:[['supermarket','SuperMarket'],['sewa','SEWA'],['restaurant','Restuarant'],['shopping','Shoping'],['wifi','wifi'],['others','Others']]},
@@ -566,7 +566,7 @@ function dLabel(d){var dt=new Date(d+'T00:00:00');return ['Sun','Mon','Tue','Wed
 function daysIn(m){var p=m.split('-');return new Date(+p[0],+p[1],0).getDate()}
 function addMonth(m,k){var p=m.split('-'),dt=new Date(+p[0],+p[1]-1+k,1);return dt.getFullYear()+'-'+pad(dt.getMonth()+1)}
 function head(id){for(var i=0;i<S.heads.length;i++) if(S.heads[i].id===id) return S.heads[i]; return null}
-function headName(id){if(id==='ignore')return 'Not an expense'; if(id==='split') return 'Split'; if(id==='ccpay') return 'Card bill payment'; for(var q=0;q<IN_TAGS.length;q++) if(IN_TAGS[q][0]===id) return IN_TAGS[q][1]; var h=head(id);return h?h.n:'Not tagged'}
+function headName(id){if(id==='ignore')return 'Not an expense'; if(id==='split') return 'Split'; if(id==='ccpay') return 'Card bill payment'; if(id==='repay') return 'Repay borrowed loan'; for(var q=0;q<IN_TAGS.length;q++) if(IN_TAGS[q][0]===id) return IN_TAGS[q][1]; var h=head(id);return h?h.n:'Not tagged'}
 function subName(h,u){if(!h||!h.subs) return ''; for(var i=0;i<h.subs.length;i++) if(h.subs[i][0]===u) return h.subs[i][1]; return ''}
 function srcName(s){return (S.sources&&S.sources[s])||SOURCES[s]||s}
 function budgetOf(m,hid){var b=S.budgets[m]; if(b&&b[hid]!=null) return +b[hid]; if(b&&Object.keys(b).length) return 0; return +(S.defBudget[hid]||0)}
@@ -611,7 +611,7 @@ var KW=[
  [/school|stationer|statione|education|edu |books/i,'hasan','',1],
  [/jewel|gold|fashion|readymad|garment|textile|cloth|shoes|centrepoint|max |noon|amazon|shein|namshi|ikea|home centre|dreams island|day to day|every day tr/i,'home','shopping']
 ];
-function validTag(id,inn){return !!head(id)||(inn&&isInTag(id))||id==='ignore'}
+function validTag(id,inn){return !!head(id)||(inn&&isInTag(id))||id==='ignore'||(!inn&&id==='repay')}
 function topOf(L){var best=null,bn=0;for(var c in L.c) if(L.c[c]>bn){bn=L.c[c];best=c} return {p:best.split('|'),share:bn/L.n,n:L.n}}
 function suggest(e){
   // returns {h,u,auto}; auto only when past tagging is clear, otherwise it is just a guess to confirm
@@ -794,7 +794,7 @@ function calc(m){
   var ents=monthEntries(m), per={}, untag=0, untagN=0;
   S.heads.forEach(function(h){per[h.id]={spent:0,budget:budgetOf(m,h.id),subs:{}}});
   ents.forEach(function(e){
-    if(e.h==='ignore'||e.h==='ccpay') return;
+    if(e.h==='ignore'||e.h==='ccpay'||e.h==='repay') return;
     var v=aed(e);
     if(isIn(e)){ // money back for a head (office reimbursement, loan repaid ...) reduces that head
       var rr=S.settings.inr||26, back=function(h,u,val){ if(per[h]){ per[h].spent-=val; if(u) per[h].subs[u]=(per[h].subs[u]||0)-val } };
@@ -915,7 +915,7 @@ function reviewCard(e){
   if(isCash(e)&&!(e.parts&&e.parts.length)) h+='<div class="small muted" style="margin-top:6px">Cash withdrawal – used for more than one thing? Split it below. Or tap one head if it was all for one thing.</div>';
   h+='<div class="chips">';
   S.heads.forEach(function(x){var isS=sg&&sg.h===x.id;h+='<button class="chip'+(isS?' sug':'')+'" data-tag="'+x.id+'"><span class="dot" style="background:'+x.c+'"></span>'+esc(x.n)+(isS&&sg.u&&subName(x,sg.u)?' · '+esc(subName(x,sg.u)):'')+'</button>'});
-  h+='<button class="chip ign" data-tag="ignore">🚫 Not an expense</button></div>';
+  h+='<button class="chip ign" data-tag="repay">🤝 Repay borrowed loan</button><button class="chip ign" data-tag="ignore">🚫 Not an expense</button></div>';
   if(e.parts&&e.parts.length) h+='<div class="small" style="margin-top:8px;color:var(--warn)">Split so far: '+esc(partsText(e))+' · <b>'+fmt(partsLeft(e),2)+' left</b></div>';
   h+='<button class="btn '+(isCash(e)?'':'sec2 ')+'sm" style="margin-top:10px" data-split="'+e.id+'">'+(isCash(e)?'💵 Split this cash into heads':'➗ Split into several heads')+'</button></div>';
   return h;
@@ -924,10 +924,10 @@ function reviewCardIn(e){
   var sg=suggest(e);
   var h='<div class="ent" data-id="'+e.id+'" style="border-left:4px solid var(--ok);border-radius:0 14px 14px 0"><div class="top"><div><div class="d">'+esc(e.t)+'</div><div class="m">'+esc(srcName(e.s))+(e.r?' · '+esc(e.r):'')+'</div></div><div class="a" style="color:var(--ok)">+ '+amtHTML(e)+'</div></div>';
   if(e.x) h+='<div class="x">'+esc(e.x.slice(0,140))+'</div>';
-  h+='<div class="chips">'+IN_TAGS.slice(0,2).map(function(q){return '<button class="chip'+(sg&&sg.h===q[0]?' sug':'')+'" data-tag="'+q[0]+'">'+(q[0]==='salary'?'💼 ':'➕ ')+q[1]+'</button>'}).join('')+'</div>';
+  h+='<div class="chips">'+IN_TAGS.slice(0,3).map(function(q){return '<button class="chip'+(sg&&sg.h===q[0]?' sug':'')+'" data-tag="'+q[0]+'">'+(q[0]==='salary'?'💼 ':q[0]==='borrow'?'🤝 ':'➕ ')+q[1]+'</button>'}).join('')+'</div>';
   h+='<div class="small muted" style="margin-top:8px">Money back for a head (reduces it):</div><div class="chips" style="margin-top:4px">';
   S.heads.forEach(function(x){var isS=sg&&sg.h===x.id;h+='<button class="chip subc'+(isS?' sug':'')+'" data-tag="'+x.id+'"><span class="dot" style="background:'+x.c+'"></span>'+esc(x.n)+'</button>'});
-  h+='</div><div class="chips">'+IN_TAGS.slice(2).map(function(q){return '<button class="chip ign'+(sg&&sg.h===q[0]?' sug':'')+'" data-tag="'+q[0]+'">🚫 '+q[1]+'</button>'}).join('')+'</div>';
+  h+='</div><div class="chips">'+IN_TAGS.slice(3).map(function(q){return '<button class="chip ign'+(sg&&sg.h===q[0]?' sug':'')+'" data-tag="'+q[0]+'">🚫 '+q[1]+'</button>'}).join('')+'</div>';
   if(e.parts&&e.parts.length) h+='<div class="small" style="margin-top:8px;color:var(--warn)">Split so far: '+esc(partsText(e))+' · <b>'+fmt(partsLeft(e),2)+' left</b></div>';
   h+='<button class="btn sec2 sm" style="margin-top:10px" data-split="'+e.id+'">➗ Split (e.g. salary + office money)</button></div>';
   return h;
@@ -996,15 +996,15 @@ document.addEventListener('click',function(ev){
 function partsOf(e){ var r=S.settings.inr||26; if(e.parts&&e.parts.length) return e.parts.map(function(p){return {h:p.h,u:p.u,v:e.c==='INR'?p.a/r:p.a}}).concat(partsLeft(e)>0.005?[{h:'',u:'',v:aed(e)*(partsLeft(e)/e.a)}]:[]); return [{h:e.h,u:e.u,v:aed(e)}] }
 function realAED(e){ return e.c==='INR'?(e.fx||e.a/(S.settings.inr||26)):e.a }
 function flowCalc(m){
-  var F={salary:0,income:0,back:{},backT:0,untagIn:0,untagInN:0,refund:0,own:0,gross:{},grossT:0,untagOut:0,ignored:0};
+  var F={salary:0,income:0,borrow:0,repay:0,back:{},backT:0,untagIn:0,untagInN:0,refund:0,own:0,gross:{},grossT:0,untagOut:0,ignored:0};
   monthEntries(m).forEach(function(e){
     if(e.h==='ccpay') return;
     partsOf(e).forEach(function(p){
       if(isIn(e)){
-        if(p.h==='salary') F.salary+=p.v; else if(p.h==='income') F.income+=p.v; else if(p.h==='refund') F.refund+=p.v; else if(p.h==='own') F.own+=p.v;
+        if(p.h==='salary') F.salary+=p.v; else if(p.h==='income') F.income+=p.v; else if(p.h==='borrow') F.borrow+=p.v; else if(p.h==='refund') F.refund+=p.v; else if(p.h==='own') F.own+=p.v;
         else if(head(p.h)){F.back[p.h]=(F.back[p.h]||0)+p.v;F.backT+=p.v} else {F.untagIn+=p.v;F.untagInN++}
       } else {
-        if(p.h==='ignore') F.ignored+=p.v; else if(head(p.h)){F.gross[p.h]=(F.gross[p.h]||0)+p.v;F.grossT+=p.v} else {F.untagOut+=p.v}
+        if(p.h==='ignore') F.ignored+=p.v; else if(p.h==='repay') F.repay+=p.v; else if(head(p.h)){F.gross[p.h]=(F.gross[p.h]||0)+p.v;F.grossT+=p.v} else {F.untagOut+=p.v}
       }
     });
   });
@@ -1013,7 +1013,7 @@ function flowCalc(m){
 }
 function flowCalcP(ms){
   if(ms.length===1) return flowCalc(ms[0]);
-  var T={salary:0,income:0,back:{},backT:0,untagIn:0,untagInN:0,refund:0,own:0,gross:{},grossT:0,untagOut:0,ignored:0,inT:0,outT:0,saved:0};
+  var T={salary:0,income:0,borrow:0,repay:0,back:{},backT:0,untagIn:0,untagInN:0,refund:0,own:0,gross:{},grossT:0,untagOut:0,ignored:0,inT:0,outT:0,saved:0};
   ms.forEach(function(m){ var F=flowCalc(m); for(var k in T){ if(typeof T[k]==='number') T[k]+=F[k]; else for(var h in F[k]) T[k][h]=(T[k][h]||0)+F[k][h] } });
   return T;
 }
@@ -1046,6 +1046,7 @@ function renderFlow(){
      row('💼 Salary',F.salary,' data-flowtag="salary"')+row('➕ Other income',F.income,' data-flowtag="income"');
   Object.keys(F.back).forEach(function(k){h+=row('↩️ Back for '+esc(headName(k)),F.back[k],' data-flowtag="'+k+'"')});
   if(F.untagInN) h+=row('🏷️ Not tagged yet',F.untagIn,' data-go="review"','color:var(--warn)');
+  if(F.borrow) h+=row('<span class="muted">🤝 Loan taken – borrowed (not income)</span>',F.borrow,' data-flowtag="borrow"','color:var(--muted)');
   h+=row('<span class="muted">Refund / cashback (not counted)</span>',F.refund,' data-flowtag="refund"','color:var(--muted)')+row('<span class="muted">Own money / not income (not counted)</span>',F.own,' data-flowtag="own"','color:var(--muted)')+
      '<tr class="tot"><td>Total in</td><td style="text-align:right">'+fmt(F.inT)+'</td></tr></tbody></table></div>';
   // 3. where it went
@@ -1054,6 +1055,7 @@ function renderFlow(){
   hs.forEach(function(x){var g=F.gross[x.id]||0,b=F.back[x.id]||0;
     h+='<tr data-head="'+x.id+'" style="cursor:pointer"><td><span class="dot" style="background:'+x.c+'"></span>'+esc(x.n)+'</td><td>'+(g?fmt(g):'–')+'</td><td class="under">'+(b?fmt(b):'–')+'</td><td>'+fmt(g-b)+'</td><td class="muted">'+(F.outT>0?Math.round(g/F.outT*100)+'%':'')+'</td></tr>'});
   if(F.untagOut) h+='<tr data-go="review" style="cursor:pointer"><td><span class="dot" style="background:#bbb"></span>Not tagged yet</td><td>'+fmt(F.untagOut)+'</td><td>–</td><td>'+fmt(F.untagOut)+'</td><td class="muted">'+(F.outT>0?Math.round(F.untagOut/F.outT*100)+'%':'')+'</td></tr>';
+  if(F.repay) h+='<tr><td class="muted">🤝 Borrowed loan repaid (not an expense)</td><td class="muted">'+fmt(F.repay)+'</td><td></td><td></td><td></td></tr>';
   h+='<tr class="tot"><td>Total out</td><td>'+fmt(F.outT)+'</td><td>'+(F.backT?fmt(F.backT):'–')+'</td><td>'+fmt(F.outT-F.backT)+'</td><td></td></tr></tbody></table></div>';
   // 4. bank account check
   var accs={}; S.entries.forEach(function(e){if(/^acc/.test(e.s)&&e.k) accs[e.s]=1}); Object.keys(S.balances||{}).forEach(function(s){accs[s]=1});
@@ -1081,6 +1083,14 @@ function renderFlow(){
   var first=S.entries.reduce(function(a,e){return !a||e.d<a?e.d:a},''), endM=m+'-'+pad(daysIn(m)), G={},K={};
   S.entries.forEach(function(e){ if(e.d>endM||e.h==='ccpay') return; partsOf(e).forEach(function(p){ if(!head(p.h)) return; if(isIn(e)) K[p.h]=(K[p.h]||0)+p.v; else G[p.h]=(G[p.h]||0)+p.v }) });
   var track=S.heads.filter(function(x){return x.id==='office'||x.id==='loan'});
+  var owe={}; S.entries.forEach(function(e){ if(e.d>endM) return; partsOf(e).forEach(function(p){ if(p.h!=='borrow'&&p.h!=='repay') return; var k=mkey(e.t)||e.t, o=owe[k]||(owe[k]={name:e.t,got:0,paid:0}); if(p.h==='borrow') o.got+=p.v; else o.paid+=p.v }) });
+  var oweK=Object.keys(owe);
+  if(oweK.length){
+    h+='<div class="sec">Money you borrowed</div><div class="tblw" style="max-height:none"><table class="cmp"><thead><tr><th>From</th><th>Borrowed</th><th>Repaid</th><th>Still to repay</th></tr></thead><tbody>';
+    oweK.forEach(function(k){var o=owe[k],d=o.got-o.paid;
+      h+='<tr><td>'+esc(o.name)+'</td><td>'+fmt(o.got)+'</td><td>'+(o.paid?fmt(o.paid):'–')+'</td><td class="'+(d>0.5?'over':'under')+'">'+(Math.abs(d)<0.5?'Settled':d>0?fmt(d):'Paid '+fmt(-d)+' extra')+'</td></tr>'});
+    h+='</tbody></table></div><p class="small muted" style="margin:-4px 4px 12px">When you pay it back, tag that payment as <b>🤝 Repay borrowed loan</b>. Borrowing and repaying are not counted as income or spending.</p>';
+  }
   if(track.length){
     h+='<div class="sec">Still to receive / pay back</div><div class="tblw" style="max-height:none"><table class="cmp"><thead><tr><th>Head</th><th>Paid out</th><th>Got back</th><th>Pending</th></tr></thead><tbody>';
     track.forEach(function(x){var g=G[x.id]||0,k=K[x.id]||0,d=g-k;
@@ -1107,9 +1117,9 @@ function openSplit(e){
     if(sg0&&sg0.h==='salary'&&sal>0&&e.a>sal) rows=[{a:sal,h:'salary',u:'',r:''},{a:Math.round((e.a-sal)*100)/100,h:'office',u:'',r:''}];
     else rows=[{a:e.a,h:sg0?sg0.h:'',u:'',r:''},{a:'',h:'',u:'',r:''}]; }
   var opts=function(sel){ var o='<option value="">— Head —</option>';
-    if(isIn(e)) o+=IN_TAGS.slice(0,2).map(function(q){return '<option value="'+q[0]+'"'+(sel===q[0]?' selected':'')+'>'+q[1]+'</option>'}).join('')+'<optgroup label="Money back for">';
+    if(isIn(e)) o+=IN_TAGS.slice(0,3).map(function(q){return '<option value="'+q[0]+'"'+(sel===q[0]?' selected':'')+'>'+q[1]+'</option>'}).join('')+'<optgroup label="Money back for">';
     o+=S.heads.map(function(x){return '<option value="'+x.id+'"'+(sel===x.id?' selected':'')+'>'+esc(x.n)+'</option>'}).join('');
-    if(isIn(e)) o+='</optgroup>'+IN_TAGS.slice(2).map(function(q){return '<option value="'+q[0]+'"'+(sel===q[0]?' selected':'')+'>'+q[1]+' (not counted)</option>'}).join('');
+    if(isIn(e)) o+='</optgroup>'+IN_TAGS.slice(3).map(function(q){return '<option value="'+q[0]+'"'+(sel===q[0]?' selected':'')+'>'+q[1]+' (not counted)</option>'}).join('');
     return o; };
   function rowHTML(p,i){var hh=head(p.h);
     return '<div class="card" style="padding:10px 12px" data-row="'+i+'"><div class="row2" style="grid-template-columns:110px 1fr"><input class="inp" type="number" inputmode="decimal" step="0.01" placeholder="Amount" data-pa="'+i+'" value="'+(p.a||'')+'">'+
@@ -1160,7 +1170,7 @@ function entMatch(e){
 function entValue(e){ // AED this entry adds to the shown total (only the matching part of a split; money back counts as minus)
   var r26=S.settings.inr||26, cv=function(a){return e.c==='INR'?a/r26:a};
   if(entFilter.h==='_in') return (isIn(e)&&e.h!=='ccpay'&&e.h!=='refund'&&e.h!=='own')?aed(e):0;
-  if(e.h==='ignore'||e.h==='ccpay'||isInTag(e.h)) return 0;
+  if(e.h==='ignore'||e.h==='ccpay'||e.h==='repay'||isInTag(e.h)) return 0;
   if(isIn(e)){ var s=0; if(e.parts&&e.parts.length) e.parts.forEach(function(p){ if(head(p.h)&&(!entFilter.h||p.h===entFilter.h)) s+=cv(p.a) }); else if(head(e.h)) s=aed(e); return -s }
   if(e.parts&&e.parts.length&&(entFilter.h||entFilter.daily)){ var v=0; e.parts.forEach(function(p){var hp=head(p.h); if((entFilter.h&&p.h===entFilter.h&&(!entFilter.u||p.u===entFilter.u))||(entFilter.daily&&hp&&hp.daily)) v+=cv(p.a)}); if(entFilter.h==='_none') v+=cv(partsLeft(e)); return v }
   return aed(e);
@@ -1184,7 +1194,7 @@ function renderEntries(){
   var lastD='';
   list.forEach(function(e){
     if(e.d!==lastD){h+='<div class="dateh">'+dLabel(e.d)+'</div>';lastD=e.d}
-    var hh=head(e.h), tg=(e.parts&&e.parts.length)?'<span class="tag" style="background:var(--brand2)">Split</span> <span class="small muted">'+esc(partsText(e))+(partsLeft(e)>0.005?' · <b style="color:var(--warn)">'+fmt(partsLeft(e),2)+' left</b>':'')+'</span>':e.h==='ignore'?'<span class="tag" style="background:#9aa5a6">Not expense</span>':(e.h==='ccpay'||e.h==='refund'||e.h==='own')?'<span class="tag" style="background:#9aa5a6">'+esc(headName(e.h))+'</span>':(e.h==='salary'||e.h==='income')?'<span class="tag" style="background:var(--ok)">'+esc(headName(e.h))+'</span>':(isIn(e)&&hh)?'<span class="tag" style="background:'+hh.c+'">Back for '+esc(hh.n)+'</span>':hh?'<span class="tag" style="background:'+hh.c+'">'+esc(hh.n)+(e.u&&subName(hh,e.u)?' · '+esc(subName(hh,e.u)):'')+'</span>':'<span class="tag" style="background:var(--bad)">Not tagged</span>';
+    var hh=head(e.h), tg=(e.parts&&e.parts.length)?'<span class="tag" style="background:var(--brand2)">Split</span> <span class="small muted">'+esc(partsText(e))+(partsLeft(e)>0.005?' · <b style="color:var(--warn)">'+fmt(partsLeft(e),2)+' left</b>':'')+'</span>':e.h==='ignore'?'<span class="tag" style="background:#9aa5a6">Not expense</span>':(e.h==='ccpay'||e.h==='refund'||e.h==='own')?'<span class="tag" style="background:#9aa5a6">'+esc(headName(e.h))+'</span>':(e.h==='borrow'||e.h==='repay')?'<span class="tag" style="background:#b9770e">🤝 '+esc(headName(e.h))+'</span>':(e.h==='salary'||e.h==='income')?'<span class="tag" style="background:var(--ok)">'+esc(headName(e.h))+'</span>':(isIn(e)&&hh)?'<span class="tag" style="background:'+hh.c+'">Back for '+esc(hh.n)+'</span>':hh?'<span class="tag" style="background:'+hh.c+'">'+esc(hh.n)+(e.u&&subName(hh,e.u)?' · '+esc(subName(hh,e.u)):'')+'</span>':'<span class="tag" style="background:var(--bad)">Not tagged</span>';
     h+='<div class="ent" data-edit="'+e.id+'" style="'+(e.h==='ignore'||e.h==='ccpay'||e.h==='refund'||e.h==='own'?'opacity:.6;':'')+(isIn(e)?'border-left:4px solid var(--ok);border-radius:0 14px 14px 0':'')+'"><div class="top"><div><div class="d">'+esc(e.t)+'</div><div class="m">'+esc(srcName(e.s))+(e.how==='auto'?' · auto-tagged':'')+(e.r?' · '+esc(e.r):'')+'</div></div><div class="a"'+(isIn(e)?' style="color:var(--ok)"':'')+'>'+(isIn(e)?'+ ':'')+amtHTML(e)+'</div></div><div style="margin-top:6px">'+tg+'</div></div>';
   });
   el.innerHTML=h; wireEntries();
@@ -1247,10 +1257,10 @@ $('#sheetbg').addEventListener('click',function(ev){if(ev.target.id==='sheetbg')
 function title(t){return '<h3>'+t+'<button data-close>✕</button></h3>'}
 
 function headOptions(sel,withNone,inn){
-  if(inn) return (withNone?'<option value="">— Choose —</option>':'')+IN_TAGS.slice(0,2).map(function(q){return '<option value="'+q[0]+'"'+(sel===q[0]?' selected':'')+'>'+q[1]+'</option>'}).join('')+
+  if(inn) return (withNone?'<option value="">— Choose —</option>':'')+IN_TAGS.slice(0,3).map(function(q){return '<option value="'+q[0]+'"'+(sel===q[0]?' selected':'')+'>'+q[1]+'</option>'}).join('')+
     '<optgroup label="Money back for">'+S.heads.map(function(x){return '<option value="'+x.id+'"'+(sel===x.id?' selected':'')+'>'+esc(x.n)+'</option>'}).join('')+'</optgroup>'+
-    IN_TAGS.slice(2).map(function(q){return '<option value="'+q[0]+'"'+(sel===q[0]?' selected':'')+'>'+q[1]+' (not counted)</option>'}).join('')+'<option value="ccpay"'+(sel==='ccpay'?' selected':'')+'>Card bill payment (not counted)</option>';
-  return (withNone?'<option value="">— Choose head —</option>':'')+S.heads.map(function(x){return '<option value="'+x.id+'"'+(sel===x.id?' selected':'')+'>'+esc(x.n)+'</option>'}).join('')+'<option value="ignore"'+(sel==='ignore'?' selected':'')+'>Not an expense (ignore)</option>';
+    IN_TAGS.slice(3).map(function(q){return '<option value="'+q[0]+'"'+(sel===q[0]?' selected':'')+'>'+q[1]+' (not counted)</option>'}).join('')+'<option value="ccpay"'+(sel==='ccpay'?' selected':'')+'>Card bill payment (not counted)</option>';
+  return (withNone?'<option value="">— Choose head —</option>':'')+S.heads.map(function(x){return '<option value="'+x.id+'"'+(sel===x.id?' selected':'')+'>'+esc(x.n)+'</option>'}).join('')+'<option value="repay"'+(sel==='repay'?' selected':'')+'>Repay borrowed loan (not an expense)</option><option value="ignore"'+(sel==='ignore'?' selected':'')+'>Not an expense (ignore)</option>';
 }
 function subOptions(hid,sel){var hh=head(hid);if(!hh||!hh.subs) return '';return hh.subs.map(function(s){return '<option value="'+s[0]+'"'+(sel===s[0]?' selected':'')+'>'+esc(s[1])+'</option>'}).join('')}
 function srcOptions(sel){var ids={};Object.keys(SOURCES).forEach(function(k){ids[k]=1});S.entries.forEach(function(e){ids[e.s]=1});
@@ -1624,7 +1634,7 @@ function render(){
   if(curView==='home') renderHome(); else if(curView==='review') renderReview(); else if(curView==='entries') renderEntries(); else if(curView==='compare') renderCompare(); else if(curView==='flow') renderFlow(); else renderMore();
 }
 save(); learn(); render();
-window.__KP={get S(){return S},save:function(){save()},syncConfig:function(c){return KPSync.config(c)},syncRun:function(){return KPSync.run()},syncStatus:function(){return KPSync.label()},syncState:function(){return KPSync.statusText()},learn:function(){learn()},bank:function(m,s){return bankCheck(m,s)},flow:function(m){return flowCalc(m)},importParsed:importParsed,analyse:analyse,calc:calc,suggest:suggest,setMonth:function(m){setMonth(m);render()},setSel:function(ms){setSel(ms);render()},calcP:function(ms){return calcP(ms)},flowP:function(ms){return flowCalcP(ms)},bankP:function(ms,s){return bankCheckP(ms,s)},setView:setView};
+window.__KP={get S(){return S},save:function(){save()},syncConfig:function(c){return KPSync.config(c)},syncRun:function(){return KPSync.run()},syncStatus:function(){return KPSync.label()},syncState:function(){return KPSync.statusText()},learn:function(){learn()},bank:function(m,s){return bankCheck(m,s)},flow:function(m){return flowCalc(m)},importParsed:importParsed,analyse:analyse,calc:calc,suggest:suggest,setMonth:function(m){setMonth(m);render()},setSel:function(ms){setSel(ms);render()},calcP:function(ms){return calcP(ms)},flowP:function(ms){return flowCalcP(ms)},flow:function(m){return flowCalc(m)},bankP:function(ms,s){return bankCheckP(ms,s)},setView:setView};
 })();
 </script>
 <script>
