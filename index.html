@@ -949,6 +949,8 @@ function guessSub(e,hh){var txt=e.t+' '+e.x;for(var i=0;i<KW.length;i++) if(KW[i
 
 /* ---------- COMPARE (budget vs actual table, like the Excel SUM sheet) ---------- */
 var cmpOpt={n:2,diff:false};
+var CMP_SKIP={cc:1,office:1,invest:1,loan:1}; // not budgeted expenses – balance-sheet items, left out of the budget comparison
+function cmpTot(c){ var tb=0,ts=c.untag; S.heads.forEach(function(x){ if(CMP_SKIP[x.id]) return; tb+=c.per[x.id].budget; ts+=c.per[x.id].spent }); return {tb:tb,ts:ts} }
 function renderCompare(){
   var el=$('#v-compare'), months=[];
   if(isMulti()) months=selMonths.slice(); else for(var i=cmpOpt.n-1;i>=0;i--) months.push(addMonth(curMonth,-i));
@@ -964,6 +966,7 @@ function renderCompare(){
       (cmpOpt.diff?'<td class="'+(b-a<-0.005?'over':b-a>0.005?'under':'')+'">'+((b||a)?fmt(b-a):'–')+'</td>':'');
   }
   S.heads.forEach(function(x){
+    if(CMP_SKIP[x.id]) return;
     var any=C.some(function(c){var p=c.per[x.id];return p.budget>0||p.spent>0}); if(!any) return;
     h+='<tr data-cm="'+x.id+'"><td><span class="dot" style="background:'+x.c+'"></span>'+esc(x.n)+'</td>'+C.map(function(c,i){var p=c.per[x.id];return cells(p.budget,p.spent,x.id,months[i])}).join('')+'</tr>';
     if(x.subs) x.subs.forEach(function(sb){
@@ -972,12 +975,12 @@ function renderCompare(){
     });
   });
   if(C.some(function(c){return c.untagN})) h+='<tr data-cm="_none"><td><span class="dot" style="background:#bbb"></span>Not tagged yet</td>'+C.map(function(c,i){return cells(0,c.untag,'_none',months[i])}).join('')+'</tr>';
-  h+='<tr class="tot"><td>Total</td>'+C.map(function(c,i){return cells(c.tb,c.ts,'',months[i])}).join('')+'</tr></tbody></table></div>';
-  if(isMulti()){ var PT=calcP(); h+='<div class="card" style="display:flex;justify-content:space-between"><span>All '+months.length+' months together</span><b>Budget '+fmt(PT.tb)+' · Actual <span style="color:'+(PT.ts>PT.tb?'var(--bad)':'var(--ok)')+'">'+fmt(PT.ts)+'</span></b></div>' }
+  h+='<tr class="tot"><td>Total</td>'+C.map(function(c,i){var T=cmpTot(c);return cells(T.tb,T.ts,'',months[i])}).join('')+'</tr></tbody></table></div>';
+  if(isMulti()){ var PT=cmpTot(calcP()); h+='<div class="card" style="display:flex;justify-content:space-between"><span>All '+months.length+' months together</span><b>Budget '+fmt(PT.tb)+' · Actual <span style="color:'+(PT.ts>PT.tb?'var(--bad)':'var(--ok)')+'">'+fmt(PT.ts)+'</span></b></div>' }
   // short summary per month
-  h+='<div class="card">'+C.slice().reverse().map(function(c,i){var m=months[months.length-1-i],d=c.tb-c.ts;
+  h+='<div class="card">'+C.slice().reverse().map(function(c,i){var m=months[months.length-1-i],T=cmpTot(c),d=T.tb-T.ts;
     return '<div class="sum"><span>'+mLabel(m)+(c.isCur?' (so far)':'')+'</span><b style="color:'+(d<0?'var(--bad)':'var(--ok)')+'">'+(d<0?'Over by '+money(-d):'Under by '+money(d))+'</b></div>'}).join('')+'</div>'+
-    '<p class="small muted" style="text-align:center">Tap any number to see the details behind it. Red = more than budget. Use ‹ › at the top to move months.</p>';
+    '<p class="small muted" style="text-align:center">Budgeted expenses only – CC, Irbaz Office, Investment and Loan are left out (see In &amp; Out). Tap any number to see the details behind it. Red = more than budget.</p>';
   el.innerHTML=h;
 }
 document.addEventListener('click',function(ev){
