@@ -1,5 +1,5 @@
-// Kharcha Pani offline cache. Version: 20261121-211813
-var CACHE='kp-20261121-211813', FILES=['./','index.html','manifest.webmanifest','icon-192.png','icon-512.png'];
+// Kharcha Pani offline cache. Version: 20261121-213918
+var CACHE='kp-20261121-213918', FILES=['./','index.html','manifest.webmanifest','icon-192.png','icon-512.png'];
 self.addEventListener('install',function(e){self.skipWaiting();e.waitUntil(caches.open(CACHE).then(function(c){return c.addAll(FILES)}))});
 self.addEventListener('activate',function(e){e.waitUntil(caches.keys().then(function(k){return Promise.all(k.filter(function(x){return x!==CACHE}).map(function(x){return caches.delete(x)}))}).then(function(){return self.clients.claim()}))});
 // Open instantly from the phone (works offline); fetch a fresh copy in the background for next time.

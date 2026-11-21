@@ -468,9 +468,10 @@ var SEED = {"budgets":{},"hist":[]};
 'use strict';
 var KEY='kharchapani.v1';
 var BAD_STATUS=/^(REVERSED|DROPPED|REFUNDED|REJECTED|FAILED|CANCELL?ED|DECLINED|VOID)/i;
-var HEADS_VERSION=4;
+var HEADS_VERSION=5;
 // Option A (Irbaz, 21 Nov): money sent from ENBD to his own ICICI account is a transfer, not spending – link both sides
 function linkOwnTransfers(){
+  S.entries.forEach(function(e){ if(e.s==='acc01'&&e.k&&(!e.h||e.how==='auto')&&isOwnCardPay(e)){ e.h='ccpay'; e.how='auto'; e.up=Date.now() } });
   var n=0, days=function(a,b){return Math.abs(new Date(a)-new Date(b))/864e5};
   var arr=S.entries.filter(function(e){return /^acc/.test(e.s)&&e.c==='INR'&&e.s!=='acc01'&&isIn(e)&&!e.lnk&&/remittance from|NEFT-EBIL.*IRBAZ/i.test((e.t||'')+' '+(e.x||''))});
   arr.forEach(function(a){
@@ -585,6 +586,7 @@ function migrate(){
     S.entries=S.entries.filter(function(e){return !drop[e.id]});
     S.balances=S.balances||{}; S.settings.salary=S.settings.salary||14000;
   }
+  if(S.hv<5){ S.entries.forEach(function(e){ if(e.s==='acc01'&&e.k&&!e.h&&isOwnCardPay(e)){ e.h='ccpay'; e.how='auto' } }) }
   if(S.hv<4){ // version 4: one bank transfer shown twice ("Account Debited" + the person's name) -> keep one
     var idx={}, drop={};
     S.entries.forEach(function(e){ if(!e.k||!/^acc/.test(e.s)) return; var q=[e.s,e.sd||e.d,e.a,e.c,isIn(e)?1:0].join('|'); (idx[q]=idx[q]||[]).push(e) });
@@ -758,7 +760,9 @@ function analyse(rows,fname){
   }
   return {src:src,rows:out,count:out.length};
 }
-function isCardPayment(e){return /cc no\.?\s*-|card payment|credit card payment|card repayment|payment received|cc payment/i.test(e.t+' '+e.x)}
+function isCardPayment(e){return /cc no\.?\s*-|card payment|credit card payment|card repayment|payment received|cc payment/i.test(e.t+' '+e.x)||isOwnCardPay(e)}
+// payment from the ENBD account to Irbaz's own credit card ending 4539 (statement shows "Rma … 526039******4539")
+function isOwnCardPay(e){ return !isIn(e)&&(e.c||'AED')==='AED'&&/irbaz niyaz qazi|account debited/i.test((e.t||'')+' '+(e.ot||''))&&/526039\*+7?4539/.test(e.x||'') }
 
 function importParsed(list,fromDate){
   learn();
