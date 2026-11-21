@@ -469,6 +469,19 @@ var SEED = {"budgets":{},"hist":[]};
 var KEY='kharchapani.v1';
 var BAD_STATUS=/^(REVERSED|DROPPED|REFUNDED|REJECTED|FAILED|CANCELL?ED|DECLINED|VOID)/i;
 var HEADS_VERSION=4;
+// Option A (Irbaz, 21 Nov): money sent from ENBD to his own ICICI account is a transfer, not spending – link both sides
+function linkOwnTransfers(){
+  var n=0, days=function(a,b){return Math.abs(new Date(a)-new Date(b))/864e5};
+  var arr=S.entries.filter(function(e){return /^acc/.test(e.s)&&e.c==='INR'&&e.s!=='acc01'&&isIn(e)&&!e.lnk&&/remittance from|NEFT-EBIL.*IRBAZ/i.test((e.t||'')+' '+(e.x||''))});
+  arr.forEach(function(a){
+    var c=S.entries.filter(function(e){return e.s==='acc01'&&!isIn(e)&&!e.lnk&&e.c==='INR'&&Math.abs(e.a-a.a)<0.5&&days(e.sd||e.d,a.d)<=4&&/irbaz niyaz qazi|account debited/i.test((e.t||'')+' '+(e.ot||''))})
+      .sort(function(x,y){return days(x.d,a.d)-days(y.d,a.d)})[0];
+    if(!c) return;
+    c.h='ignore'; c.u=''; delete c.parts; c.r='Sent to own ICICI account'; c.how='user'; c.lnk=a.id; c.up=Date.now();
+    if(!a.h){ a.h='own'; a.how='user' } a.lnk=c.id; a.up=Date.now(); n++;
+  });
+  return n;
+}
 function isGenericE(e){ return /^account (debited|credited)$/i.test(e.ot||e.t||'')||/\|accou (debit|credi)\|/.test(e.k||'') }
 var IN_TAGS=[['salary','Salary'],['income','Other income'],['borrow','Loan taken (borrowed)'],['refund','Refund / cashback'],['own','Not income (own money)']];
 function isIn(e){return e.io==='in'}
@@ -801,7 +814,7 @@ function importParsed(list,fromDate){
     S.entries.forEach(function(e){ delete e._twin });
     res.files.push({src:p.src,count:p.count,added:added});
   });
-  save(); learn();
+  linkOwnTransfers(); save(); learn();
   return res;
 }
 
@@ -1484,9 +1497,10 @@ function mergeIn(o){
     var l=byId[e.id]||(e.k&&byK[e.k]);
     if(!l){ if(e.k&&dead[e.k]) return; S.entries.push(e); byId[e.id]=e; if(e.k)byK[e.k]=e; added++; return }
     var take=(e.up||0)>(l.up||0) || (!l.h&&e.h);
-    if(take&&!( l.h && !e.h )){ ['d','t','x','a','c','s','h','u','how','r','split','parts','io','fx','sd','ot'].forEach(function(f){l[f]=e[f]}); l.up=e.up; updated++ }
+    if(take&&!( l.h && !e.h )){ ['d','t','x','a','c','s','h','u','how','r','split','parts','io','fx','sd','ot','lnk'].forEach(function(f){l[f]=e[f]}); l.up=e.up; updated++ }
   });
   S.deleted=Object.keys(dead);
+  linkOwnTransfers();
   S.balances=S.balances||{}; Object.keys(inc.balances||{}).forEach(function(s){ var B=S.balances[s]||(S.balances[s]={}); Object.keys(inc.balances[s]).forEach(function(d){ if(B[d]==null) B[d]=inc.balances[s][d] }) });
   if((inc.cfgUp||0)>(S.cfgUp||0)){S.heads=inc.heads;S.hv=inc.hv;S.budgets=inc.budgets;S.defBudget=inc.defBudget;S.settings=inc.settings;S.sources=inc.sources||{};S.cfgUp=inc.cfgUp}
   save(); learn(); return {added:added,updated:updated};
