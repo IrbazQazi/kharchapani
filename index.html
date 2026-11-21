@@ -468,7 +468,8 @@ var SEED = {"budgets":{},"hist":[]};
 'use strict';
 var KEY='kharchapani.v1';
 var BAD_STATUS=/^(REVERSED|DROPPED|REFUNDED|REJECTED|FAILED|CANCELL?ED|DECLINED|VOID)/i;
-var HEADS_VERSION=3;
+var HEADS_VERSION=4;
+function isGenericE(e){ return /^account (debited|credited)$/i.test(e.ot||e.t||'')||/\|accou (debit|credi)\|/.test(e.k||'') }
 var IN_TAGS=[['salary','Salary'],['income','Other income'],['borrow','Loan taken (borrowed)'],['refund','Refund / cashback'],['own','Not income (own money)']];
 function isIn(e){return e.io==='in'}
 function isInTag(id){return id==='salary'||id==='income'||id==='borrow'||id==='refund'||id==='own'}
@@ -489,7 +490,7 @@ var DEFAULT_HEADS=[
  {id:'others',n:'Others',c:'#7b8a8b',daily:true}
 ];
 var DEFAULT_BUDGET={home:2200,irbaz:1500,hasan:850,india:1392.16};
-var SOURCES={card1296:'EI Credit Card ••1296',card6944:'ENBD Credit Card ••6944',acc01:'Bank Account ••01 (Debit)',cash:'Cash',other:'Other'};
+var SOURCES={card1296:'EI Credit Card ••1296',card6944:'ENBD Credit Card ••6944',acc01:'Bank Account ••01 (Debit)',acc8658:'ICICI Bank ••8658 (INR)',cash:'Cash',other:'Other'};
 
 /* ---------- storage ---------- */
 var storageOK=true, S;
@@ -571,6 +572,16 @@ function migrate(){
     S.entries=S.entries.filter(function(e){return !drop[e.id]});
     S.balances=S.balances||{}; S.settings.salary=S.settings.salary||14000;
   }
+  if(S.hv<4){ // version 4: one bank transfer shown twice ("Account Debited" + the person's name) -> keep one
+    var idx={}, drop={};
+    S.entries.forEach(function(e){ if(!e.k||!/^acc/.test(e.s)) return; var q=[e.s,e.sd||e.d,e.a,e.c,isIn(e)?1:0].join('|'); (idx[q]=idx[q]||[]).push(e) });
+    Object.keys(idx).forEach(function(q){ var L=idx[q], G=L.filter(isGenericE), N=L.filter(function(e){return !isGenericE(e)});
+      while(G.length&&N.length){ var g=G.shift(), n=N.shift();
+        if(!/^account (debited|credited)$/i.test(g.t)){} else { g.ot=g.ot||g.t; g.t=n.t }
+        if(!g.h&&n.h){ g.h=n.h; g.u=n.u; if(n.parts) g.parts=n.parts; g.how=n.how }
+        g.up=Date.now(); drop[n.id]=1; S.deleted.push('id:'+n.id); if(n.k) S.deleted.push(n.k) } });
+    S.entries=S.entries.filter(function(e){return !drop[e.id]});
+  }
   S.hv=HEADS_VERSION; S.cfgUp=Date.now();
   try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){}
 }
@@ -608,6 +619,13 @@ function payerOf(t,x){
   if(!/^(account credited|inward transfer|account debited)/i.test(t||'')) return '';
   var m=/aed\s*[\d.,]+\s*([A-Za-z][\s\S]*?)(\/ref\/|goods bought|utility bill|sent from|salary|$)/i.exec(x||'');
   if(!m) return ''; var w=m[1].trim().split(/\s+/).slice(0,4).join(' '); return w.length>2?w:'';
+}
+function prettyRemark(t){
+  t=String(t||''); if(t.indexOf('/')<0||t.length<24) return t;
+  var p=t.split('/').map(function(s){return s.trim()}).filter(Boolean);
+  if(/^UPI$/i.test(p[0])){ var nm=p[1]||'', note=p[3]||''; if(/^(upi|payment|pay|sent|na|ok)\b/i.test(note)||/\d{5,}/.test(note)) note=''; return 'UPI · '+nm+(note?' – '+note:'') }
+  var keep=p.filter(function(s){return !/\d{5,}/.test(s)&&!/^[A-Z]{2,4}[0-9a-f]{12,}/i.test(s)});
+  return keep.slice(0,4).join(' · ')||t;
 }
 function refOf(x){var m=/\/ref\/\s*(.+)$/i.exec(x||'');return m?m[1].trim().slice(0,40):''}
 function dkey(s,d,a,c,t){return [s,d,(+a).toFixed(2),c||'AED',mkey(t)].join('|')}
@@ -650,6 +668,7 @@ function suggest(e){
     if(/infini|kapil\s*bansal/i.test(tx)) return {h:'salary',u:'',auto:false};
     if(/refund|reversal|cash ?back|cashback/i.test(tx)||/^card/.test(e.s)) return {h:'refund',u:'',auto:false};
     if(/cash deposit/i.test(tx)) return {h:'own',u:'',auto:false};
+    if(/remittance from.*emirates|emirates n.*remittance|NEFT-EBIL.*IRBAZ|INFT.*Self/i.test(tx)) return {h:'own',u:'',auto:true};
     return null;
   }
   var inr=e.c==='INR';
@@ -694,13 +713,16 @@ function analyse(rows,fname){
   };
   if(col.date<0) col.date=find(/date/);
   if(col.det<0){col.det=col.desc; col.desc=-1}
+  if(col.det<0&&col.rem>=0){col.det=col.rem; col.rem=-1}
   // detect source
   var src='', pre=rows.slice(0,hi).map(function(r){return (r||[]).join(' ')}).join(' ')+' ';
   var m=/card\s*(?:no|number)?[^\d]*([\d\*xX ]{8,})/i.exec(pre), m2=/account\s*(?:no|number)?[^\dxX]*([\dxX\*]{4,})/i.exec(pre);
   if(m){var dg=m[1].replace(/\D/g,''); src='card'+dg.slice(-4)}
-  else if(m2){var dg2=m2[1].replace(/\D/g,''); src='acc'+dg2.slice(-2)}
+  else if(m2){var dg2=m2[1].replace(/\D/g,''); src='acc'+(dg2.length>=10?dg2.slice(-4):dg2.slice(-2))}
   else src='file:'+fname.replace(/\.[a-z]+$/i,'').slice(0,20);
   var isCard=/^card/.test(src);
+  // account currency when there is no currency column, e.g. "Withdrawal Amount(INR)" or "054401568658 ( INR )"
+  var defCur='AED', cm=/\(\s*(INR|AED|USD|EUR|GBP)\s*\)/i.exec(H.join(' ')+' '+pre)||/currency\s*:\s*(INR|AED|USD)/i.exec(pre); if(cm) defCur=cm[1].toUpperCase();
   var out=[];
   for(i=hi+1;i<rows.length;i++){
     var r=rows[i]||[]; var d=parseDate(r[col.date]); if(!d) continue;
@@ -715,7 +737,7 @@ function analyse(rows,fname){
       else isDebit = isCard ? av>0 : av<0;
     }
     if(amt==null||amt===0) continue;
-    var cur=col.cur>=0?String(r[col.cur]).trim().toUpperCase()||'AED':'AED';
+    var cur=col.cur>=0?String(r[col.cur]).trim().toUpperCase()||defCur:defCur;
     var st=col.st>=0?String(r[col.st]).trim():'';
     var rem=col.rem>=0?String(r[col.rem]).trim():'';
     var bal=col.bal>=0?num(r[col.bal]):null;
@@ -732,14 +754,21 @@ function importParsed(list,fromDate){
   S.balances=S.balances||{};
   var res={added:0,auto:0,need:0,needIn:0,autoIn:0,dup:0,credit:0,ccpay:0,status:0,older:0,matched:0,files:[]};
   list.forEach(function(p){
-    var occ={}, added=0, chain=[];
+    var occ={}, added=0, chain=[], rej={};
+    // a rejected payment that the bank gives back as "Account Credited" on the same day: skip that give-back too
+    p.rows.forEach(function(r){ if(BAD_STATUS.test(r.st)&&r.debit){ var q=r.d+'|'+r.a; rej[q]=(rej[q]||0)+1 } });
     p.rows.forEach(function(r){
       if(BAD_STATUS.test(r.st)){res.status++;return}
+      if(!r.debit&&/^account credited$/i.test(r.t)&&rej[r.d+'|'+r.a]){ rej[r.d+'|'+r.a]--; res.status++; return }
       chain.push(r);
       var inn=!r.debit, cc=isCardPayment(r);
       var base=(inn?'in|':(cc?'cc|':''))+dkey(p.src,r.d,r.a,r.c,r.t); occ[base]=(occ[base]||0)+1; var k=base+'#'+occ[base];
       if(r.d<fromDate){res.older++;return}
       if(byK[k]||dead[k]){res.dup++; r._e=byK[k]; return}
+      // same transaction shown as "Account Debited / Credited" in one statement and with the real name in another
+      var gen=/^account (debited|credited)$/i, twin=null;
+      S.entries.forEach(function(e){ if(!twin&&e.k&&!e._twin&&e.s===p.src&&(e.sd||e.d)===r.d&&Math.abs(e.a-r.a)<0.005&&e.c===r.c&&!!isIn(e)===inn&&e.k!==k&&(gen.test(r.t)!==isGenericE(e))) twin=e });
+      if(twin){ twin._twin=1; if(isGenericE(twin)&&!gen.test(r.t)){ twin.ot=twin.ot||twin.t; twin.t=inn?(payerOf(r.t,r.x)||r.t):r.t; twin.up=now() } res.dup++; r._e=twin; return }
       if(!inn&&!cc){
         // match a manual entry made for the same card/amount within 3 days
         var mm=null;
@@ -747,7 +776,9 @@ function importParsed(list,fromDate){
         if(mm){mm.k=k; mm.x=mm.x||r.x; mm.up=now(); byK[k]=mm; r._e=mm; res.matched++; return}
       }
       var e={id:uid(),d:r.d,t:r.t||r.x,x:r.t?r.x:'',a:r.a,c:r.c,s:p.src,h:'',u:'',how:'',k:k,r:r.rem,up:now()};
-      if(inn){ e.io='in'; var pay=payerOf(r.t,r.x); if(pay) e.t=pay; e.r=e.r||refOf(r.x); }
+      if(e.t.indexOf('/')>=0&&e.t.length>=24){ e.x=e.x||e.t; e.t=prettyRemark(e.t) }
+      if(inn){ e.io='in'; var pay=payerOf(r.t,r.x); if(pay){ e.ot=r.t; e.t=pay } e.r=e.r||refOf(r.x); }
+      if(/^account (debited|credited)$/i.test(r.t)) e.ot=r.t;
       if(cc){ e.h='ccpay'; e.how='auto'; res.ccpay++; }
       else {
         var sg=suggest(e);
@@ -767,6 +798,7 @@ function importParsed(list,fromDate){
         ord.forEach(function(r,i){ var o=ord[i+1]; if(r.c==='INR'&&o&&r._e){ var dl=Math.round((r.debit?o.bal-r.bal:r.bal-o.bal)*100)/100, est=r.a/(S.settings.inr||26); if(dl>0&&Math.abs(dl-est)<est*0.15) r._e.fx=dl } });
       }
     }
+    S.entries.forEach(function(e){ delete e._twin });
     res.files.push({src:p.src,count:p.count,added:added});
   });
   save(); learn();
@@ -1049,17 +1081,18 @@ function flowCalcP(ms){
 }
 function bankCheckP(ms,src){
   if(ms.length===1) return bankCheck(ms[0],src);
-  var A=bankCheck(ms[0],src), Z=bankCheck(ms[ms.length-1],src), R={src:src,opening:A.opening,closing:Z.closing,lastD:Z.lastD,in:0,outExp:0,outCC:0,fxDiff:0};
+  var A=bankCheck(ms[0],src), Z=bankCheck(ms[ms.length-1],src), R={src:src,cur:A.cur,opening:A.opening,closing:Z.closing,lastD:Z.lastD,in:0,outExp:0,outCC:0,fxDiff:0};
   ms.forEach(function(m){ var x=bankCheck(m,src); R.in+=x.in; R.outExp+=x.outExp; R.outCC+=x.outCC; R.fxDiff+=x.fxDiff });
   if(R.opening!=null){ R.expected=R.opening+R.in-R.outExp-R.outCC; if(R.closing==null) R.closing=R.opening; R.diff=R.closing-R.expected }
   return R;
 }
+function accCur(src){ var n={}; S.entries.forEach(function(e){ if(e.s===src&&e.k) n[e.c]=(n[e.c]||0)+1 }); var best='AED',bn=0; for(var c in n) if(n[c]>bn){bn=n[c];best=c} return best }
 function bankCheck(m,src){
   var B=(S.balances||{})[src]||{}, ds=Object.keys(B).sort(), start=m+'-01', end=m+'-'+pad(daysIn(m));
   var before=ds.filter(function(d){return d<start}), inM=ds.filter(function(d){return d>=start&&d<=end});
-  var R={src:src,opening:before.length?B[before[before.length-1]]:null,closing:inM.length?B[inM[inM.length-1]]:null,lastD:inM.length?inM[inM.length-1]:null,in:0,outExp:0,outCC:0,fxDiff:0};
-  S.entries.forEach(function(e){ if(e.s!==src||!e.k||(e.sd||e.d).slice(0,7)!==m) return; var v=realAED(e);
-    if(e.c==='INR'&&e.fx) R.fxDiff+=e.fx-e.a/(S.settings.inr||26);
+  var cur=accCur(src), R={src:src,cur:cur,opening:before.length?B[before[before.length-1]]:null,closing:inM.length?B[inM[inM.length-1]]:null,lastD:inM.length?inM[inM.length-1]:null,in:0,outExp:0,outCC:0,fxDiff:0};
+  S.entries.forEach(function(e){ if(e.s!==src||!e.k||(e.sd||e.d).slice(0,7)!==m) return; var v=cur==='AED'?realAED(e):(e.c===cur?e.a:e.a*(S.settings.inr||26));
+    if(cur==='AED'&&e.c==='INR'&&e.fx) R.fxDiff+=e.fx-e.a/(S.settings.inr||26);
     if(isIn(e)) R.in+=v; else if(e.h==='ccpay') R.outCC+=v; else R.outExp+=v; });
   if(R.opening!=null){ R.expected=R.opening+R.in-R.outExp-R.outCC; if(R.closing==null){R.closing=R.opening;} R.diff=R.closing-R.expected }
   return R;
@@ -1097,7 +1130,7 @@ function renderFlow(){
       row('Opening balance (end of '+mLabel(addMonth(ms[0],-1))+')',R.opening)+row('+ Money in',R.in)+row('− Paid from account',R.outExp)+row('− Paid to credit cards',R.outCC)+
       '<tr class="tot"><td>Should be</td><td style="text-align:right">'+fmt(R.expected)+'</td></tr>'+
       row('Statement says'+(R.lastD?' ('+R.lastD.slice(8)+' '+MN[+R.lastD.slice(5,7)-1]+')':''),R.closing)+'</tbody></table></div>'+
-      '<div class="alert '+(ok?'info':'warn')+'" style="'+(ok?'background:#e3f3e9;color:var(--ok)':'')+'">'+(ok?'✓ Matches – nothing missing':'Difference '+money(R.diff,2)+'. Some entries may be missing – import the full month of the account statement.')+'</div>';
+      (R.cur&&R.cur!=='AED'?'<div class="small muted" style="margin:-4px 4px 8px">Amounts in '+R.cur+'.</div>':'')+'<div class="alert '+(ok?'info':'warn')+'" style="'+(ok?'background:#e3f3e9;color:var(--ok)':'')+'">'+(ok?'✓ Matches – nothing missing':'Difference '+(R.cur&&R.cur!=='AED'?R.cur+' '+fmt(R.diff,2):money(R.diff,2))+'. Some entries may be missing – import the full month of the account statement.')+'</div>';
     if(Math.abs(R.fxDiff)>=1) h+='<div class="small muted" style="margin:-4px 4px 10px">INR transfers: the bank took '+money(Math.abs(R.fxDiff),2)+' '+(R.fxDiff>0?'more':'less')+' than the flat rate of '+S.settings.inr+' (included above).</div>';
   });
   // 5. credit cards
@@ -1451,7 +1484,7 @@ function mergeIn(o){
     var l=byId[e.id]||(e.k&&byK[e.k]);
     if(!l){ if(e.k&&dead[e.k]) return; S.entries.push(e); byId[e.id]=e; if(e.k)byK[e.k]=e; added++; return }
     var take=(e.up||0)>(l.up||0) || (!l.h&&e.h);
-    if(take&&!( l.h && !e.h )){ ['d','t','x','a','c','s','h','u','how','r','split','parts','io','fx','sd'].forEach(function(f){l[f]=e[f]}); l.up=e.up; updated++ }
+    if(take&&!( l.h && !e.h )){ ['d','t','x','a','c','s','h','u','how','r','split','parts','io','fx','sd','ot'].forEach(function(f){l[f]=e[f]}); l.up=e.up; updated++ }
   });
   S.deleted=Object.keys(dead);
   S.balances=S.balances||{}; Object.keys(inc.balances||{}).forEach(function(s){ var B=S.balances[s]||(S.balances[s]={}); Object.keys(inc.balances[s]).forEach(function(d){ if(B[d]==null) B[d]=inc.balances[s][d] }) });
