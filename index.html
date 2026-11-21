@@ -504,7 +504,7 @@ var DEFAULT_HEADS=[
  {id:'others',n:'Others',c:'#7b8a8b',daily:true}
 ];
 var DEFAULT_BUDGET={home:2200,irbaz:1500,hasan:850,india:1392.16};
-var SOURCES={card1296:'EI Credit Card ••1296',card6944:'ENBD Credit Card ••6944',acc01:'Bank Account ••01 (Debit)',acc8658:'ICICI Bank ••8658 (INR)',cash:'Cash',other:'Other'};
+var SOURCES={card1296:'EI Credit Card ••1296',card6944:'ENBD Credit Card ••6944',acc01:'Bank Account ••01 (Debit)',acc8658:'ICICI Bank ••8658 (INR)',card2677:'RAKBANK RED Card ••2677',cash:'Cash',other:'Other'};
 
 /* ---------- storage ---------- */
 var storageOK=true, S;
@@ -760,7 +760,7 @@ function analyse(rows,fname){
   }
   return {src:src,rows:out,count:out.length};
 }
-function isCardPayment(e){return /cc no\.?\s*-|card payment|credit card payment|card repayment|payment received|cc payment/i.test(e.t+' '+e.x)||isOwnCardPay(e)}
+function isCardPayment(e){return /cc no\.?\s*-|card payment|credit card payment|card repayment|payment received|payment recvd|cc payment/i.test(e.t+' '+e.x)||isOwnCardPay(e)}
 // payment from the ENBD account to Irbaz's own credit card ending 4539 (statement shows "Rma … 526039******4539")
 function isOwnCardPay(e){ return !isIn(e)&&(e.c||'AED')==='AED'&&/irbaz niyaz qazi|account debited/i.test((e.t||'')+' '+(e.ot||''))&&/526039\*+7?4539/.test(e.x||'') }
 
