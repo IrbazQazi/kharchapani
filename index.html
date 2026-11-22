@@ -958,29 +958,71 @@ function openBreakdown(kind){
 }
 
 /* ---------- REVIEW ---------- */
-var REVIEW_LIMIT=60;
+var REVIEW_LIMIT=60, revQ='', revTimer=null;
+function revMatch(e,q){
+  var hay=((e.t||'')+' '+(e.ot||'')+' '+(e.x||'')+' '+(e.r||'')+' '+srcName(e.s)+' '+e.a+' '+fmt(e.a,2)+' '+(e.c||'')).toLowerCase();
+  return q.split(/\s+/).every(function(w){return !w||hay.indexOf(w)>=0});
+}
 function renderReview(){
   var el=$('#v-review'); learn();
+  if(!$('#revSearch')){
+    el.innerHTML='<div class="srch" style="position:sticky;top:0;z-index:5;background:var(--bg);padding:4px 0 8px;display:flex;gap:8px">'+
+      '<input id="revSearch" class="inp" type="text" enterkeyhint="search" placeholder="🔍 Search name, shop or amount…" autocomplete="off" style="flex:1">'+
+      '<button class="btn sec2 sm" id="revClear" style="display:none">✕</button></div><div id="revList"></div>';
+    var inp=$('#revSearch');
+    inp.addEventListener('input',function(){ clearTimeout(revTimer); revTimer=setTimeout(function(){ revQ=inp.value.trim().toLowerCase(); renderReviewList(); window.scrollTo(0,0) },150) });
+    $('#revClear').addEventListener('click',function(){ inp.value=''; revQ=''; renderReviewList(); inp.focus() });
+    inp.value=revQ;
+  }
+  renderReviewList();
+}
+function renderReviewList(){
+  var el=$('#revList'); $('#revClear').style.display=revQ?'':'none';
   var all=S.entries.filter(function(e){return !e.h}).sort(function(a,b){return b.d<a.d?-1:b.d>a.d?1:0});
-  var list=all.filter(function(e){return !isIn(e)}), inl=all.filter(isIn);
-  var h='';
-  if(!all.length){el.innerHTML='<div class="empty"><b>All tagged 🎉</b>Every entry has a head. Import a new statement when ready.</div><button class="btn full" data-act="import">⬆️ Import statement</button>';return}
-  var sugN=list.filter(function(e){return !(e.parts&&e.parts.length)&&suggest(e)}).length;
-  h+='<div class="card"><b>'+all.length+'</b> '+(all.length===1?'entry needs':'entries need')+' a head. Tap the right head under each one. '+
-     '<span class="muted small">Highlighted = my guess. Once you tag a shop, I remember it next time.</span>'+
-     (sugN?'<button class="btn full" style="margin-top:10px" data-act="acceptall">✓ Accept all '+sugN+' guesses</button>':'')+'</div>';
+  if(!all.length){$('#revSearch').parentNode.style.display='none';el.innerHTML='<div class="empty"><b>All tagged 🎉</b>Every entry has a head. Import a new statement when ready.</div><button class="btn full" data-act="import">⬆️ Import statement</button>';return}
+  $('#revSearch').parentNode.style.display='flex';
+  var found=revQ?all.filter(function(e){return revMatch(e,revQ)}):all;
+  var list=found.filter(function(e){return !isIn(e)}), inl=found.filter(isIn);
+  var lim=revQ?300:REVIEW_LIMIT, h='';
+  if(revQ){
+    if(!found.length){el.innerHTML='<div class="empty"><b>Nothing found</b>No untagged entry matches “'+esc(revQ)+'”.</div>';return}
+    var tot=list.reduce(function(s,e){return s+aed(e)},0);
+    h+='<div class="card"><b>'+found.length+'</b> found'+(list.length?' · '+money(tot,2)+' spent':'')+'.';
+    if(list.length>1){
+      h+='<div class="small muted" style="margin-top:8px">Tag all <b>'+list.length+'</b> payments found as:</div><div class="chips" id="bulkChips" style="margin-top:4px">';
+      S.heads.forEach(function(x){h+='<button class="chip" data-bulk="'+x.id+'"><span class="dot" style="background:'+x.c+'"></span>'+esc(x.n)+'</button>'});
+      h+='<button class="chip ign" data-bulk="repay">🤝 Repay borrowed loan</button><button class="chip ign" data-bulk="ignore">🚫 Not an expense</button></div>';
+    }
+    if(inl.length>1){
+      h+='<div class="small muted" style="margin-top:8px">Tag all <b>'+inl.length+'</b> money received found as:</div><div class="chips" style="margin-top:4px">'+
+        IN_TAGS.map(function(q){return '<button class="chip'+(q[0]==='refund'||q[0]==='own'?' ign':'')+'" data-bulk="'+q[0]+'" data-bin="1">'+q[1]+'</button>'}).join('')+
+        S.heads.map(function(x){return '<button class="chip subc" data-bulk="'+x.id+'" data-bin="1"><span class="dot" style="background:'+x.c+'"></span>Back for '+esc(x.n)+'</button>'}).join('')+'</div>';
+    }
+    h+='</div>';
+  } else {
+    var sugN=list.filter(function(e){return !(e.parts&&e.parts.length)&&suggest(e)}).length;
+    h+='<div class="card"><b>'+all.length+'</b> '+(all.length===1?'entry needs':'entries need')+' a head. Tap the right head under each one. '+
+       '<span class="muted small">Highlighted = my guess. Once you tag a shop, I remember it next time. Use the search box to find one name and tag them all at once.</span>'+
+       (sugN?'<button class="btn full" style="margin-top:10px" data-act="acceptall">✓ Accept all '+sugN+' guesses</button>':'')+'</div>';
+  }
   var lastD='';
-  list.slice(0,REVIEW_LIMIT).forEach(function(e){
+  list.slice(0,lim).forEach(function(e){
     if(e.d!==lastD){h+='<div class="dateh">'+dLabel(e.d)+'</div>';lastD=e.d}
     h+=reviewCard(e);
   });
-  if(list.length>REVIEW_LIMIT) h+='<div class="empty small">Showing '+REVIEW_LIMIT+' of '+list.length+'. Tag these and more will appear.</div>';
+  if(list.length>lim) h+='<div class="empty small">Showing '+lim+' of '+list.length+'. Tag these and more will appear.</div>';
   if(inl.length){
     h+='<div class="sec" style="color:var(--ok)">💰 Money received · '+inl.length+'</div><div class="small muted" style="margin:0 4px 8px">Salary, money back for a head (office, loan…), or other income. Refunds and your own money are not counted.</div>';
     lastD='';
-    inl.slice(0,REVIEW_LIMIT).forEach(function(e){ if(e.d!==lastD){h+='<div class="dateh">'+dLabel(e.d)+'</div>';lastD=e.d} h+=reviewCardIn(e) });
+    inl.slice(0,lim).forEach(function(e){ if(e.d!==lastD){h+='<div class="dateh">'+dLabel(e.d)+'</div>';lastD=e.d} h+=reviewCardIn(e) });
   }
   el.innerHTML=h;
+}
+function bulkTag(hid,sub,incoming){
+  var n=0, items=S.entries.filter(function(e){return !e.h&&!!isIn(e)===!!incoming&&revMatch(e,revQ)});
+  items.forEach(function(e){ delete e.parts; e.h=hid; e.u=sub||(head(hid)&&head(hid).subs&&!incoming?guessSub(e,head(hid)):''); e.how='user'; e.up=now(); n++ });
+  save(); learn(); toast(n+' entries → '+headName(hid)+(sub&&head(hid)?' · '+subName(head(hid),sub):''));
+  render();
 }
 function amtHTML(e){return e.c==='INR'?'<span>INR '+fmt(e.a,2)+'</span><div class="m" style="text-align:right">≈ '+money(aed(e),2)+'</div>':money(e.a,2)}
 function reviewCard(e){
@@ -1751,7 +1793,12 @@ function doCSV(){
 
 /* ---------- global click handling ---------- */
 document.addEventListener('click',function(ev){
-  var t=ev.target.closest('[data-close],[data-go],[data-act],[data-tag],[data-edit],[data-head],[data-split],[data-daily],[data-bd],[data-allm],[data-shops],[data-pick]'); if(!t) return;
+  var t=ev.target.closest('[data-close],[data-go],[data-act],[data-tag],[data-edit],[data-head],[data-split],[data-daily],[data-bd],[data-allm],[data-shops],[data-pick],[data-bulk]'); if(!t) return;
+  if(t.dataset.bulk){ var bh=head(t.dataset.bulk), bin=!!t.dataset.bin;
+    if(bh&&bh.subs&&!bin&&!t.dataset.sub){ var bx=$('#bulkAsk'); if(bx) bx.remove(); bx=document.createElement('div'); bx.id='bulkAsk';
+      bx.innerHTML='<div class="small muted" style="margin-top:10px">Which '+esc(bh.n)+' type?</div><div class="chips" style="margin-top:6px">'+bh.subs.map(function(s){return '<button class="chip subc on" data-bulk="'+bh.id+'" data-sub="'+s[0]+'">'+esc(s[1])+'</button>'}).join('')+'</div>';
+      t.closest('.chips').after(bx); return }
+    bulkTag(t.dataset.bulk,t.dataset.sub||'',bin); return }
   if(t.hasAttribute('data-close')) closeSheet();
   if(t.dataset.go){ closeSheet(); setView(t.dataset.go); }
   if(t.dataset.head){ entFilter={h:t.dataset.head,q:'',u:t.dataset.sub||'',daily:false}; closeSheet(); setView('entries'); }
