@@ -469,7 +469,7 @@ var SEED = {"budgets":{},"hist":[]};
 'use strict';
 var KEY='kharchapani.v1';
 var BAD_STATUS=/^(REVERSED|DROPPED|REFUNDED|REJECTED|FAILED|CANCELL?ED|DECLINED|VOID)/i;
-var HEADS_VERSION=5;
+var HEADS_VERSION=6;
 // Option A (Irbaz, 21 Nov): money sent from ENBD to his own ICICI account is a transfer, not spending – link both sides
 function linkOwnTransfers(){
   S.entries.forEach(function(e){ if(e.s==='acc01'&&e.k&&(!e.h||e.how==='auto')&&isOwnCardPay(e)){ e.h='ccpay'; e.how='auto'; e.up=Date.now() } });
@@ -500,6 +500,7 @@ var DEFAULT_HEADS=[
  {id:'gift',n:'Gift',c:'#e74c3c',daily:false},
  {id:'indoth',n:'Ind Others',c:'#a569bd',daily:false},
  {id:'office',n:'Irbaz Office',c:'#34495e',daily:false},
+ {id:'apl',n:'APL',c:'#d35400',daily:false},
  {id:'loan',n:'Loan',c:'#b9770e',daily:false},
  {id:'invest',n:'Investment',c:'#16a085',daily:false},
  {id:'others',n:'Others',c:'#7b8a8b',daily:true}
@@ -598,7 +599,9 @@ function migrate(){
         g.up=Date.now(); drop[n.id]=1; S.deleted.push('id:'+n.id); if(n.k) S.deleted.push(n.k) } });
     S.entries=S.entries.filter(function(e){return !drop[e.id]});
   }
-  S.hv=HEADS_VERSION; S.cfgUp=Date.now();
+  var cfgBump=S.hv<5;
+  if(S.hv<6&&!S.heads.some(function(x){return x.id==='apl'})){ var oi=-1; S.heads.forEach(function(x,i){if(x.id==='office') oi=i}); S.heads.splice(oi>=0?oi+1:S.heads.length,0,{id:'apl',n:'APL',c:'#d35400',daily:false}) }
+  S.hv=HEADS_VERSION; if(cfgBump) S.cfgUp=Date.now();
   try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){}
 }
 /* ---------- helpers ---------- */
@@ -967,7 +970,7 @@ function revMatch(e,q){
 function renderReview(){
   var el=$('#v-review'); learn();
   if(!$('#revSearch')){
-    el.innerHTML='<div class="srch" style="position:sticky;top:0;z-index:5;background:var(--bg);padding:4px 0 8px;display:flex;gap:8px">'+
+    el.innerHTML='<div class="srch" style="padding:4px 0 8px;display:flex;gap:8px">'+
       '<input id="revSearch" class="inp" type="text" enterkeyhint="search" placeholder="🔍 Search name, shop or amount…" autocomplete="off" style="flex:1">'+
       '<button class="btn sec2 sm" id="revClear" style="display:none">✕</button></div><div class="seg" id="revIO"><button data-rio="">All</button><button data-rio="out">⬆ Paid</button><button data-rio="in">⬇ Received</button></div><div id="revList"></div>';
     $('#revIO').addEventListener('click',function(ev){var b=ev.target.closest('[data-rio]'); if(!b) return; revIO=b.dataset.rio; renderReviewList(); window.scrollTo(0,0)});
@@ -1074,7 +1077,7 @@ function guessSub(e,hh){var txt=e.t+' '+e.x;for(var i=0;i<KW.length;i++) if(KW[i
 
 /* ---------- COMPARE (budget vs actual table, like the Excel SUM sheet) ---------- */
 var cmpOpt={n:2,diff:false};
-var CMP_SKIP={cc:1,office:1,invest:1,loan:1}; // not budgeted expenses – balance-sheet items, left out of the budget comparison
+var CMP_SKIP={cc:1,office:1,apl:1,invest:1,loan:1}; // not budgeted expenses – balance-sheet items, left out of the budget comparison
 function onlyBudgeted(c){ var T=cmpTot(c); c.tb=T.tb; c.ts=T.ts; return c }
 function cmpTot(c){ var tb=0,ts=c.untag; S.heads.forEach(function(x){ if(CMP_SKIP[x.id]) return; tb+=c.per[x.id].budget; ts+=c.per[x.id].spent }); return {tb:tb,ts:ts} }
 function renderCompare(){
@@ -1212,7 +1215,7 @@ function renderFlow(){
   // 6. still to receive / pay back (office, loans …)
   var first=S.entries.reduce(function(a,e){return !a||e.d<a?e.d:a},''), endM=m+'-'+pad(daysIn(m)), G={},K={};
   S.entries.forEach(function(e){ if(e.d>endM||e.h==='ccpay') return; partsOf(e).forEach(function(p){ if(!head(p.h)) return; if(isIn(e)) K[p.h]=(K[p.h]||0)+p.v; else G[p.h]=(G[p.h]||0)+p.v }) });
-  var track=S.heads.filter(function(x){return x.id==='office'||x.id==='loan'});
+  var track=S.heads.filter(function(x){return x.id==='office'||x.id==='apl'||x.id==='loan'});
   var owe={}; S.entries.forEach(function(e){ if(e.d>endM) return; partsOf(e).forEach(function(p){ if(p.h!=='borrow'&&p.h!=='repay') return; var k=mkey(e.t)||e.t, o=owe[k]||(owe[k]={name:e.t,got:0,paid:0}); if(p.h==='borrow') o.got+=p.v; else o.paid+=p.v }) });
   var oweK=Object.keys(owe);
   if(oweK.length){
