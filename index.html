@@ -1156,6 +1156,17 @@ function bankCheckP(ms,src){
   if(R.opening!=null){ R.expected=R.opening+R.in-R.outExp-R.outCC; if(R.closing==null) R.closing=R.opening; R.diff=R.closing-R.expected }
   return R;
 }
+// walk day by day through the statement balances and find the days where the app's running total stops matching the statement
+function nextDay(d){var x=new Date(d+'T12:00:00Z');x.setUTCDate(x.getUTCDate()+1);return x.toISOString().slice(0,10)}
+function bankTrace(src,start,end){
+  var B=(S.balances||{})[src]||{}, ds=Object.keys(B).sort(), cur=accCur(src), before=ds.filter(function(d){return d<start});
+  if(!before.length) return [];
+  var pts=ds.filter(function(d){return d>=start&&d<=end}), net={};
+  S.entries.forEach(function(e){ if(e.s!==src||!e.k) return; var d=e.sd||e.d; if(d<start||d>end) return; var v=cur==='AED'?realAED(e):(e.c===cur?e.a:e.a*(S.settings.inr||26)); net[d]=(net[d]||0)+(isIn(e)?v:-v) });
+  var bal=B[before[before.length-1]], prevD=start, gap=0, out=[], nd=Object.keys(net).sort(), i=0;
+  pts.forEach(function(d){ while(i<nd.length&&nd[i]<=d){ bal+=net[nd[i]]; i++ } var g=B[d]-bal; if(Math.abs(g-gap)>=1) out.push({d:d,from:prevD===start?start:nextDay(prevD),v:g-gap}); gap=g; prevD=d });
+  return out;
+}
 function accCur(src){ var n={}; S.entries.forEach(function(e){ if(e.s===src&&e.k) n[e.c]=(n[e.c]||0)+1 }); var best='AED',bn=0; for(var c in n) if(n[c]>bn){bn=n[c];best=c} return best }
 function bankCheck(m,src){
   var B=(S.balances||{})[src]||{}, ds=Object.keys(B).sort(), start=m+'-01', end=m+'-'+pad(daysIn(m));
@@ -1201,6 +1212,10 @@ function renderFlow(){
       '<tr class="tot"><td>Should be</td><td style="text-align:right">'+fmt(R.expected)+'</td></tr>'+
       row('Statement says'+(R.lastD?' ('+R.lastD.slice(8)+' '+MN[+R.lastD.slice(5,7)-1]+')':''),R.closing)+'</tbody></table></div>'+
       (R.cur&&R.cur!=='AED'?'<div class="small muted" style="margin:-4px 4px 8px">Amounts in '+R.cur+'.</div>':'')+'<div class="alert '+(ok?'info':'warn')+'" style="'+(ok?'background:#e3f3e9;color:var(--ok)':'')+'">'+(ok?'✓ Matches – nothing missing':'Difference '+(R.cur&&R.cur!=='AED'?R.cur+' '+fmt(R.diff,2):money(R.diff,2))+'. Some entries may be missing – import the full month of the account statement.')+'</div>';
+    if(!ok){ var tr=bankTrace(src,ms[0]+'-01',ms[ms.length-1]+'-'+pad(daysIn(ms[ms.length-1])));
+      if(tr.length){ h+='<div class="card small"><b>Where the difference starts</b><div class="muted" style="margin:2px 0 6px">The statement balance stops matching on these days. Tap a day to see its entries.</div>'+
+        tr.slice(0,8).map(function(t){var dl=dLabel(t.d); return '<div class="li" data-bday="'+t.from+'|'+t.d+'|'+src+'" style="display:flex;justify-content:space-between;padding:7px 0;border-top:1px solid var(--line);cursor:pointer"><span>'+(t.from<t.d?dLabel(t.from)+' – ':'')+dl+'</span><b style="color:var(--bad);text-align:right">'+(t.v<0?'−'+fmt(-t.v,2)+' payment missing in app?':'+'+fmt(t.v,2)+' money in missing in app?')+' ›</b></div>'}).join('')+
+        (tr.length>8?'<div class="muted" style="margin-top:4px">+ '+(tr.length-8)+' more days</div>':'')+'</div>' } }
     if(Math.abs(R.fxDiff)>=1) h+='<div class="small muted" style="margin:-4px 4px 10px">INR transfers: the bank took '+money(Math.abs(R.fxDiff),2)+' '+(R.fxDiff>0?'more':'less')+' than the flat rate of '+S.settings.inr+' (included above).</div>';
   });
   // 5. credit cards
@@ -1234,6 +1249,12 @@ function renderFlow(){
   el.innerHTML=h;
 }
 document.addEventListener('click',function(ev){
+  var bd=ev.target.closest('[data-bday]');
+  if(bd){ var q=bd.dataset.bday.split('|'), from=q[0], to=q[1], src=q[2], B=(S.balances||{})[src]||{};
+    var L=S.entries.filter(function(e){var d=e.sd||e.d; return e.s===src&&e.k&&d>=from&&d<=to}).sort(function(a,b){var x=a.sd||a.d,y=b.sd||b.d;return x<y?-1:x>y?1:0});
+    var h=title(esc(srcName(src)))+'<div class="small muted" style="margin-bottom:8px">Entries in the app for '+dLabel(from)+(from<to?' – '+dLabel(to):'')+'. Compare with the same days in your bank statement or bank app. Statement balance on '+dLabel(to)+': <b>'+fmt(B[to],2)+'</b>.</div>';
+    h+=L.length?L.map(function(e){return '<div class="ent" data-edit="'+e.id+'"><div class="top"><div><div class="d">'+esc(e.t)+'</div><div class="m">'+ioBadge(e)+dLabel(e.sd||e.d)+'</div></div><div class="a" style="color:'+(isIn(e)?'var(--ok)':'var(--bad)')+'">'+(isIn(e)?'+ ':'− ')+amtHTML(e)+'</div></div></div>'}).join(''):'<div class="empty">No entries in the app for these days.</div>';
+    openSheet(h); return }
   var b=ev.target.closest('[data-flowin],[data-flowtag]'); if(!b) return;
   if(b.dataset.flowin){ entFilter={h:'_in',q:'',u:'',daily:false}; setView('entries'); return }
   var tg=b.dataset.flowtag; entFilter={h:'_in',q:'',u:'',daily:false,inTag:tg}; setView('entries');
