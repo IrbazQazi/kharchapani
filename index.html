@@ -469,7 +469,7 @@ var SEED = {"budgets":{},"hist":[]};
 'use strict';
 var KEY='kharchapani.v1';
 var BAD_STATUS=/^(REVERSED|DROPPED|REFUNDED|REJECTED|FAILED|CANCELL?ED|DECLINED|VOID)/i;
-var HEADS_VERSION=6;
+var HEADS_VERSION=7;
 // Option A (Irbaz, 21 Nov): money sent from ENBD to his own ICICI account is a transfer, not spending – link both sides
 function linkOwnTransfers(){
   S.entries.forEach(function(e){ if(e.s==='acc01'&&e.k&&(!e.h||e.how==='auto')&&isOwnCardPay(e)){ e.h='ccpay'; e.how='auto'; e.up=Date.now() } });
@@ -556,6 +556,20 @@ function seedCredits(have){
   });
   return out;
 }
+// one bank transfer shown twice ("Account Debited" + the person's name) -> keep one
+function dedupTwins(){
+  var idx={}, drop={}, n=0;
+  S.deleted=S.deleted||[];
+  S.entries.forEach(function(e){ if(!e.k||!/^acc/.test(e.s)) return; var q=[e.s,e.sd||e.d,e.a,e.c,isIn(e)?1:0].join('|'); (idx[q]=idx[q]||[]).push(e) });
+  Object.keys(idx).forEach(function(q){ var L=idx[q], G=L.filter(isGenericE), N=L.filter(function(e){return !isGenericE(e)});
+    while(G.length&&N.length){ var g=G.shift(), x=N.shift();
+      if(/^account (debited|credited)$/i.test(g.t)){ g.ot=g.ot||g.t; g.t=x.t }
+      if(x.h&&(!g.h||(x.how==='user'&&g.how!=='user'))){ g.h=x.h; g.u=x.u; if(x.parts) g.parts=x.parts; else delete g.parts; g.how=x.how }
+      if(g.fx==null&&x.fx!=null) g.fx=x.fx;
+      g.up=Date.now(); drop[x.id]=1; S.deleted.push('id:'+x.id); if(x.k) S.deleted.push(x.k); n++ } });
+  if(n) S.entries=S.entries.filter(function(e){return !drop[e.id]});
+  return n;
+}
 function migrate(){
   if(S.hv===HEADS_VERSION) return;
   if(!S.hv||S.hv<2){
@@ -589,16 +603,7 @@ function migrate(){
     S.balances=S.balances||{}; S.settings.salary=S.settings.salary||14000;
   }
   if(S.hv<5){ S.entries.forEach(function(e){ if(e.s==='acc01'&&e.k&&!e.h&&isOwnCardPay(e)){ e.h='ccpay'; e.how='auto' } }) }
-  if(S.hv<4){ // version 4: one bank transfer shown twice ("Account Debited" + the person's name) -> keep one
-    var idx={}, drop={};
-    S.entries.forEach(function(e){ if(!e.k||!/^acc/.test(e.s)) return; var q=[e.s,e.sd||e.d,e.a,e.c,isIn(e)?1:0].join('|'); (idx[q]=idx[q]||[]).push(e) });
-    Object.keys(idx).forEach(function(q){ var L=idx[q], G=L.filter(isGenericE), N=L.filter(function(e){return !isGenericE(e)});
-      while(G.length&&N.length){ var g=G.shift(), n=N.shift();
-        if(!/^account (debited|credited)$/i.test(g.t)){} else { g.ot=g.ot||g.t; g.t=n.t }
-        if(!g.h&&n.h){ g.h=n.h; g.u=n.u; if(n.parts) g.parts=n.parts; g.how=n.how }
-        g.up=Date.now(); drop[n.id]=1; S.deleted.push('id:'+n.id); if(n.k) S.deleted.push(n.k) } });
-    S.entries=S.entries.filter(function(e){return !drop[e.id]});
-  }
+  if(S.hv<7) dedupTwins(); // version 4 did this once; version 7 again for rows that came in later
   var cfgBump=S.hv<5;
   if(S.hv<6&&!S.heads.some(function(x){return x.id==='apl'})){ var oi=-1; S.heads.forEach(function(x,i){if(x.id==='office') oi=i}); S.heads.splice(oi>=0?oi+1:S.heads.length,0,{id:'apl',n:'APL',c:'#d35400',daily:false}) }
   S.hv=HEADS_VERSION; if(cfgBump) S.cfgUp=Date.now();
@@ -1574,10 +1579,12 @@ function mergeIn(o){
     if(dead['id:'+e.id]) return;
     var l=byId[e.id]||(e.k&&byK[e.k]);
     if(!l){ if(e.k&&dead[e.k]) return; S.entries.push(e); byId[e.id]=e; if(e.k)byK[e.k]=e; added++; return }
+    if(l.fx==null&&e.fx!=null) l.fx=e.fx;
     var take=(e.up||0)>(l.up||0) || (!l.h&&e.h);
     if(take&&!( l.h && !e.h )){ ['d','t','x','a','c','s','h','u','how','r','split','parts','io','fx','sd','ot','lnk'].forEach(function(f){l[f]=e[f]}); l.up=e.up; updated++ }
   });
   S.deleted=Object.keys(dead);
+  dedupTwins(); S.deleted=Object.keys(S.deleted.reduce(function(o,k){o[k]=1;return o},{}));
   linkOwnTransfers();
   S.balances=S.balances||{}; Object.keys(inc.balances||{}).forEach(function(s){ var B=S.balances[s]||(S.balances[s]={}); Object.keys(inc.balances[s]).forEach(function(d){ if(B[d]==null) B[d]=inc.balances[s][d] }) });
   if((inc.cfgUp||0)>(S.cfgUp||0)){S.heads=inc.heads;S.hv=inc.hv;S.budgets=inc.budgets;S.defBudget=inc.defBudget;S.settings=inc.settings;S.sources=inc.sources||{};S.cfgUp=inc.cfgUp}
